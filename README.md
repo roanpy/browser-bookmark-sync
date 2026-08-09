@@ -22,6 +22,10 @@ I looked for existing open-source tools before writing this project. They solved
 
 This project does not try to replace native browser cloud sync or become another hosted bookmark service. It provides a local-first bridge for migration, controlled mirroring, backup, verification, and browser-specific repair.
 
+## Development Note
+
+This project was developed primarily with OpenAI Codex as the main coding and integration agent. Other agents assisted with focused research, review, validation, documentation, and release checks. The maintainer made the final decisions about scope, safety boundaries, browser operations, and publication.
+
 > [!WARNING]
 > This is a mirror tool, not a merge service. A real sync replaces the mapped bookmark trees in each selected target. Preview the direction first and keep the automatic backups.
 
