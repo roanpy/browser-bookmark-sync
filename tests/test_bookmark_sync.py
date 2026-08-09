@@ -752,6 +752,37 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertIsNone(backup_path)
         self.assertTrue(result.same_portable)
 
+    def test_strict_sync_fails_when_content_differs_with_same_count(self) -> None:
+        source_store = make_store("chrome:Default", "chrome")
+        target_store = make_store("edge:Default", "edge")
+        source = make_snapshot(
+            source_store,
+            {"bar": [{"type": "url", "name": "Source", "url": "https://source.invalid"}], "menu": [], "synced": []},
+        )
+        verification = bookmark_sync.SyncVerification(
+            reloaded=make_snapshot(
+                target_store,
+                {"bar": [{"type": "url", "name": "Target", "url": "https://target.invalid"}], "menu": [], "synced": []},
+            ),
+            same_count=True,
+            same_portable=False,
+            source_signature="source",
+            target_signature="target",
+        )
+
+        with (
+            mock.patch.object(bookmark_sync, "write_target_store"),
+            mock.patch.object(bookmark_sync, "verify_snapshot_with_stabilization", return_value=verification),
+            mock.patch.object(bookmark_sync, "repair_sync_if_needed", return_value=verification),
+            mock.patch.object(bookmark_sync, "record_sync_baseline") as record_baseline,
+            mock.patch.object(bookmark_sync, "record_sync_observation") as record_observation,
+        ):
+            with self.assertRaises(SystemExit):
+                bookmark_sync.sync_store(source, target_store, "strict", backup_enabled=False)
+
+        record_observation.assert_called_once()
+        record_baseline.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

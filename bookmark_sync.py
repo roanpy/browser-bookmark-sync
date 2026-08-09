@@ -1267,13 +1267,15 @@ def sync_store(source: BookmarkSnapshot, target: BrowserStore, mode: str, backup
     verification = verify_snapshot_with_stabilization(target, source)
     verification = repair_sync_if_needed(source, target, mode, verification)
     reloaded = verification.reloaded
+    attach_recorded_baseline(previous_baseline, verification)
+    record_sync_observation(source.store, target, mode, verification)
+    if mode == "strict" and not verification.same_portable:
+        raise SystemExit(f"Verification mismatch for {target.label}: strict sync did not produce an exact match")
     if not verification.same_count and not (target.format == "safari" and reloaded.bookmark_count >= source.bookmark_count):
         raise SystemExit(
             f"Verification mismatch for {target.label}: expected about {source.bookmark_count} bookmarks, got {reloaded.bookmark_count}"
         )
-    attach_recorded_baseline(previous_baseline, verification)
     record_sync_baseline(source.store, target, mode, verification)
-    record_sync_observation(source.store, target, mode, verification)
     return backup_path, verification
 
 

@@ -122,6 +122,8 @@ ruff check .
 
 The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, and wrapper commands. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
 
+See [CHANGELOG.md](CHANGELOG.md) for the version history. The first public source release is `v0.1.0`.
+
 ## Scope
 
 - Bookmark mirroring only; history, passwords, tabs, extensions, and browser settings are never modified.
