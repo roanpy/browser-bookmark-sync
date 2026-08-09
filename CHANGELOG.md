@@ -6,7 +6,7 @@
 - Add an installable `bookmark-sync` CLI entry point for scripts, agents, and CI.
 - Add `--json` output with exit codes, strategies, backups, results, and verification summaries on stdout; detailed logs remain on stderr.
 - Add subprocess coverage for the real JSON CLI contract.
-- Add a tag-driven Developer ID signing and Apple notarization workflow for public macOS releases.
+- Add tag-driven source/wheel publishing with optional Developer ID signing and Apple notarization for macOS releases.
 
 ## [0.1.0] - 2026-08-09
 

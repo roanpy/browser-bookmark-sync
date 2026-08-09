@@ -1,10 +1,10 @@
 # Releasing
 
-Bookmark Sync releases are tag-driven. The release workflow builds the wheel, signs the macOS app with a Developer ID certificate, submits it to Apple notarization, staples the ticket, generates checksums, and publishes a GitHub Release.
+Bookmark Sync releases are tag-driven. Without Apple credentials, the release workflow publishes the source archive and Python wheel. With a complete Apple credential set, it additionally signs the macOS app with a Developer ID certificate, submits it to Apple notarization, staples the ticket, generates checksums, and publishes the app zip.
 
-## Required GitHub Actions Secrets
+## Signed App Credentials
 
-Create a protected GitHub Environment named `release` and require reviewer approval. Configure these environment secrets before pushing a release tag:
+To publish only source and wheel assets, no Apple credentials are required. To attach a signed and notarized macOS app, create a protected GitHub Environment named `release`, require reviewer approval, and configure these environment secrets before pushing a release tag:
 
 - `MACOS_CERTIFICATE_BASE64`: base64-encoded Developer ID Application `.p12` certificate.
 - `MACOS_CERTIFICATE_PASSWORD`: password for the `.p12` file.
@@ -13,7 +13,7 @@ Create a protected GitHub Environment named `release` and require reviewer appro
 - `APPLE_TEAM_ID`: Apple Developer Team ID.
 - `APPLE_APP_PASSWORD`: app-specific password for `notarytool`.
 
-Do not commit the certificate, passwords, API tokens, or exported keychain. The workflow fails before building a release if any required secret is missing.
+Do not commit the certificate, passwords, API tokens, or exported keychain. The workflow fails if only part of the Apple credential set is configured; it otherwise falls back to the safe source-and-wheel release mode.
 
 Protect `v*` tags so only maintainers can start the signing workflow. The workflow checks out the tagged source and receives signing credentials only after the protected environment is approved.
 
@@ -30,4 +30,4 @@ git tag -a v0.1.1 -m "Release v0.1.1"
 git push origin v0.1.1
 ```
 
-The `release.yml` workflow then publishes the wheel, notarized `Bookmark Sync.app` zip, and `SHA256SUMS` to the GitHub Release. If Apple credentials are not configured, the workflow fails safely rather than publishing an unsigned app.
+The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured and approved, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.

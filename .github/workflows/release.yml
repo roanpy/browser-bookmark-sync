@@ -33,7 +33,8 @@ jobs:
           }
           python3 -m unittest discover -s tests
 
-      - name: Require Apple release credentials
+      - name: Determine release mode
+        id: release_mode
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -43,14 +44,35 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           set -eu
-          test -n "$MACOS_CERTIFICATE_BASE64" || { echo "::error::Missing MACOS_CERTIFICATE_BASE64"; exit 1; }
-          test -n "$MACOS_CERTIFICATE_PASSWORD" || { echo "::error::Missing MACOS_CERTIFICATE_PASSWORD"; exit 1; }
-          test -n "$APPLE_DEVELOPER_ID" || { echo "::error::Missing APPLE_DEVELOPER_ID"; exit 1; }
-          test -n "$APPLE_ID" || { echo "::error::Missing APPLE_ID"; exit 1; }
-          test -n "$APPLE_TEAM_ID" || { echo "::error::Missing APPLE_TEAM_ID"; exit 1; }
-          test -n "$APPLE_APP_PASSWORD" || { echo "::error::Missing APPLE_APP_PASSWORD"; exit 1; }
+          provided=0
+          missing=0
+          for value in \
+            "$MACOS_CERTIFICATE_BASE64" \
+            "$MACOS_CERTIFICATE_PASSWORD" \
+            "$APPLE_DEVELOPER_ID" \
+            "$APPLE_ID" \
+            "$APPLE_TEAM_ID" \
+            "$APPLE_APP_PASSWORD"
+          do
+            if [ -n "$value" ]; then
+              provided=$((provided + 1))
+            else
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$provided" -gt 0 ] && [ "$missing" -gt 0 ]; then
+            echo "::error::Apple release credentials must be configured as a complete set"
+            exit 1
+          fi
+          if [ "$provided" -eq 6 ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple credentials configured; publishing source and wheel only."
+          fi
 
       - name: Install Developer ID certificate
+        if: steps.release_mode.outputs.signed == 'true'
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -67,18 +89,26 @@ jobs:
           security default-keychain -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$KEYCHAIN_PATH"
 
-      - name: Build wheel and signed app
+      - name: Build source and wheel
+        run: |
+          set -eu
+          python3 -m pip wheel --disable-pip-version-check --no-deps . --wheel-dir dist
+          version="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="bookmark-sync-${version}/" -o "dist/bookmark-sync-${version}.tar.gz" "$GITHUB_SHA"
+
+      - name: Build signed app
+        if: steps.release_mode.outputs.signed == 'true'
         env:
           APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           set -eu
-          python3 -m pip wheel --disable-pip-version-check --no-deps . --wheel-dir dist
           ./build-macos-app "$APP_PATH"
           codesign --force --deep --options runtime --timestamp --sign "$APPLE_DEVELOPER_ID" "$APP_PATH"
           codesign --verify --deep --strict "$APP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$NOTARY_ZIP"
 
       - name: Notarize and staple app
+        if: steps.release_mode.outputs.signed == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
