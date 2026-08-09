@@ -144,7 +144,7 @@ The temporary Chrome/Edge extension uses the documented Chromium `bookmarks` API
 ```bash
 python3 -m unittest discover -s tests
 python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
-python3 -m pip wheel --no-deps --no-build-isolation . --wheel-dir /tmp/bookmark-sync-wheel
+python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 
