@@ -21,4 +21,5 @@ jobs:
       - run: python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
       - run: python3 -m pip wheel --disable-pip-version-check --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
       - run: ruff check .
+      - run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "release.yml YAML parsed"'
       - run: ./build-macos-app "$RUNNER_TEMP/Bookmark Sync.app"
