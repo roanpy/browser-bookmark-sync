@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a reproducible problem with sanitized browser and sync details.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach real bookmark files, backups, browser profiles, account names, private URLs, or unsanitized logs.
+        Use synthetic bookmarks and follow the private reporting instructions in SECURITY.md for security issues.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version and browser version(s), without account names or local paths.
+      placeholder: macOS 15.x; Edge 1xx; Chrome 1xx
+    validations:
+      required: true
+  - type: input
+    id: direction
+    attributes:
+      label: Sync direction
+      description: Source and target browser, for example Chrome to Edge.
+      placeholder: Chrome to Edge
+    validations:
+      required: true
+  - type: dropdown
+    id: strategy
+    attributes:
+      label: Strategy
+      options:
+        - auto
+        - direct
+        - cloud-safe
+        - preview
+        - restore
+    validations:
+      required: true
+  - type: dropdown
+    id: cloud_sync
+    attributes:
+      label: Target cloud sync
+      options:
+        - Enabled
+        - Disabled
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic bookmark names and URLs only.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized output
+      description: Remove bookmark titles, URLs, account names, local paths, and backup paths before pasting.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed real bookmark data, backups, private URLs, account names, and local paths.
+          required: true

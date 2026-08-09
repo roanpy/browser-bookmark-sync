@@ -113,6 +113,8 @@ ruff check .
 
 版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前首个公开源码版本为 `v0.1.0`。
 
+提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
+
 ## 范围与限制
 
 - 只处理书签；不会修改历史记录、密码、标签页、扩展或其他浏览器设置。

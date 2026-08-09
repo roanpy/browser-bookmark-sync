@@ -124,6 +124,8 @@ The automated suite covers conversion, stable metadata reuse, strategy selection
 
 See [CHANGELOG.md](CHANGELOG.md) for the version history. The first public source release is `v0.1.0`.
 
+Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md](TEST_MATRIX.md) before submitting browser or recovery changes.
+
 ## Scope
 
 - Bookmark mirroring only; history, passwords, tabs, extensions, and browser settings are never modified.
