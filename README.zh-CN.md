@@ -7,6 +7,16 @@
 
 Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 Chrome、Edge、Safari、Brave、Vivaldi、Opera 之间的书签同步方向。书签数据只在本机处理，项目不提供账号系统或云端书签服务。
 
+## 为什么会有这个项目
+
+我一直会在多个浏览器和不同使用环境之间切换，但浏览器书签通常只能在同一家厂商的生态内比较可靠地同步。要让 Chrome、Edge、Safari 以及其他浏览器保持同一套书签，实际并不容易；尤其是在开启浏览器原生云同步后，本地修改可能暂时正确，浏览器重新打开时又会被云端旧条目回灌。
+
+在自己写这个项目之前，我也找过很多开源工具。它们分别解决了跨浏览器同步中的重要部分，但我没有找到一个同时覆盖“明确指定来源和目标、本地备份与回滚、Safari 支持，以及针对云端回灌的实际修复流程”的方案。因此，Bookmark Sync 就是从这个缺口开始写的。
+
+> **核心问题：** 多浏览器在现实中很有必要，但它们的书签存储格式和云同步行为并没有真正互通，无法安全地保持一棵可信书签树。
+
+这个项目不是为了替代浏览器原生云同步，也不是要再做一个托管书签云服务，而是提供一个本地优先的桥接层，用于迁移、可控镜像、备份、校验和针对浏览器差异的修复。
+
 > [!WARNING]
 > 这是镜像工具，不是合并服务。正式同步会替换目标浏览器中已映射的书签树。请先预览同步方向，并保留默认自动备份。
 
@@ -26,7 +36,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 | 两套同步策略 | 普通或纯本地配置使用快速直写；仅在 Chrome/Edge 确认存在回灌时使用云安全修复。 |
 | 数据安全保护 | 默认备份、`0600` 权限、原子替换、写后校验、带回滚备份的恢复。 |
 | 本地隐私 | 无遥测、无 API Key、无托管服务，不上传书签；状态文件只保存哈希和时序观测。 |
-| Agent 可调用 | 提供稳定的非交互 CLI 和可选 Codex/Hermes Skill 指令；Skill 是适配层，CLI 才是核心。 |
+| Agent 可调用 | 提供可安装、确定性的 CLI 和稳定 JSON 输出，并保留可选 Codex/Hermes Skill 指令；Skill 是适配层，CLI 才是核心。 |
 | 易于扩展 | 浏览器检测和格式处理器分离注册，新增 Chromium 浏览器可复用现有格式处理器。 |
 
 ## 浏览器支持
@@ -54,11 +64,28 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
+不保留源码目录也可以安装可调用 CLI：
+
+```bash
+python3 -m pip install --user .
+bookmark-sync --list
+```
+
+需要隔离用户环境时可使用 `pipx install .`。项目没有运行时依赖，当前仍仅支持 macOS。
+
 只预览 Chrome 到 Edge 和 Safari，不写入：
 
 ```bash
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ```
+
+Agent 和 CI 可以从 stdout 读取 JSON，详细人工日志会写到 stderr：
+
+```bash
+bookmark-sync --from chrome --to edge safari --mode preview --json
+```
+
+JSON 协议带有版本号，包含操作、退出码、选定书签库、策略、备份路径、结果数量和校验摘要，不包含书签标题或 URL。
 
 严格同步；请先关闭相关浏览器，或明确允许工具自动关闭：
 
@@ -105,7 +132,8 @@ open "dist/Bookmark Sync.app"
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile bookmark_sync.py sync-bookmarks
+python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
+python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 

@@ -1,7 +1,7 @@
 ---
 name: bookmark-sync
 description: Detect and sync local Chrome, Edge, Safari, Brave, Vivaldi, and Opera bookmark stores with automatic backups.
-version: 1.4.0
+version: 1.5.0
 author: roanpy
 license: MIT
 platforms: [macos]
@@ -12,7 +12,7 @@ metadata:
 
 # Bookmark Sync
 
-Run commands from the repository root. Prefer `./sync-bookmarks` for normal automation and `python3 bookmark_sync.py` for advanced doctor/calibrate options.
+After installation, use `bookmark-sync` from any directory. From a checkout, `./sync-bookmarks` remains available. Use `python3 bookmark_sync.py` for advanced doctor/calibrate options.
 
 ## Rules
 
@@ -30,12 +30,14 @@ Run commands from the repository root. Prefer `./sync-bookmarks` for normal auto
 
 ```bash
 ./sync-bookmarks --list
+bookmark-sync --list --json
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ./sync-bookmarks --from chrome --to edge safari --auto-close
 ./sync-bookmarks --from chrome --to edge --auto-close --allow-cloud-purge
 ./sync-bookmarks --restore-backup /path/to/backup --restore-target edge --auto-close
 python3 bookmark_sync.py --doctor all
 python3 bookmark_sync.py --calibrate edge
+bookmark-sync --from chrome --to edge safari --mode preview --json
 ```
 
 ## Verification
@@ -43,3 +45,4 @@ python3 bookmark_sync.py --calibrate edge
 - Sync output must include a target backup, bookmark result count, and stabilization result.
 - Restore output must include a rollback backup and result count.
 - Backups default to `~/Downloads/bookmark-sync-backups`.
+- JSON mode writes only the versioned result object to stdout; human diagnostics remain on stderr. The JSON object never includes bookmark titles or URLs.
