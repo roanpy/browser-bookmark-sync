@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Refresh release and security wording after publishing `v0.1.1`.
+- Add direct wheel installation guidance, a feature-request template, and Dependabot configuration.
+
 ## [0.1.1] - 2026-08-09
 
 - Clarify the project's motivation and the cross-browser/cloud-reinjection problem on the homepage.
