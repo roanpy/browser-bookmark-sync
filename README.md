@@ -12,6 +12,16 @@
 
 Bookmark Sync is a command-line tool and small macOS app for explicitly mirroring bookmarks between Chrome, Edge, Safari, Brave, Vivaldi, and Opera. Bookmark data stays on the machine; the project has no account system or bookmark server.
 
+## Why This Project Exists
+
+I work across multiple browsers and different environments, but browser bookmarks are usually only synchronized reliably inside one vendor's ecosystem. Keeping the same bookmark tree across Chrome, Edge, Safari, and other browsers becomes especially difficult when native cloud sync is enabled: a local correction may appear to succeed, then stale cloud entries can be re-injected when the browser opens again.
+
+I looked for existing open-source tools before writing this project. They solved important parts of cross-browser synchronization, but I did not find one that combined explicit source-to-target mirroring, local backups and rollback, Safari support, and a practical repair path for cloud reinjection. Bookmark Sync grew out of that gap.
+
+> **The core problem:** multiple browsers are useful in real life, but their bookmark stores and cloud-sync behavior are not interoperable enough to keep one trusted tree aligned safely.
+
+This project does not try to replace native browser cloud sync or become another hosted bookmark service. It provides a local-first bridge for migration, controlled mirroring, backup, verification, and browser-specific repair.
+
 > [!WARNING]
 > This is a mirror tool, not a merge service. A real sync replaces the mapped bookmark trees in each selected target. Preview the direction first and keep the automatic backups.
 
@@ -31,7 +41,7 @@ Bookmark Sync is a command-line tool and small macOS app for explicitly mirrorin
 | Two sync strategies | Fast direct writes for normal/local profiles; cloud-safe remediation only for confirmed Chrome/Edge reinjection cases. |
 | Data-loss guards | Target backup, `0600` permissions, atomic replacement, post-write verification, and verified restore with rollback. |
 | Local-first privacy | No telemetry, API key, hosted service, or bookmark upload. Runtime state stores hashes and timing observations, not URLs. |
-| Agent-friendly interface | Deterministic non-interactive CLI plus optional Codex/Hermes Skill instructions. The Skill is an adapter; the CLI remains the product core. |
+| Agent-friendly interface | Installable deterministic CLI with stable JSON output plus optional Codex/Hermes Skill instructions. The Skill is an adapter; the CLI remains the product core. |
 | Extensible registry | Browser detection and format handlers are registered separately, so another Chromium browser can reuse the existing handler. |
 
 ## Browser support
@@ -63,11 +73,28 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
+Install the callable CLI without keeping a repository checkout:
+
+```bash
+python3 -m pip install --user .
+bookmark-sync --list
+```
+
+For isolated user installs, use `pipx install .` instead. The package has no runtime dependencies and remains macOS-only.
+
 Preview Chrome to Edge and Safari without writing:
 
 ```bash
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ```
+
+Agent and CI integrations can consume JSON on stdout; detailed human diagnostics stay on stderr:
+
+```bash
+bookmark-sync --from chrome --to edge safari --mode preview --json
+```
+
+The JSON schema is versioned and reports the operation, exit code, selected stores, strategies, backup paths, result counts, and verification summaries. It never includes bookmark titles or URLs.
 
 Run a strict sync. Close affected browsers first, or explicitly let the tool close them:
 
@@ -116,7 +143,8 @@ The temporary Chrome/Edge extension uses the documented Chromium `bookmarks` API
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile bookmark_sync.py sync-bookmarks
+python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
+python3 -m pip wheel --no-deps --no-build-isolation . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 

@@ -6,6 +6,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 
 - Engine: `bookmark_sync.py`
 - Short CLI: `sync-bookmarks`
+- Installed CLI: `bookmark-sync`
 - macOS app source: `bookmark-sync-app.applescript`
 - App builder: `build-macos-app`
 - State: `~/Library/Application Support/Bookmark Sync/state.json`
@@ -36,6 +37,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 ```bash
 # Inspect
 ./sync-bookmarks --list
+bookmark-sync --list --json
 
 # Preview
 ./sync-bookmarks --from chrome --to edge safari --mode preview
@@ -52,7 +54,12 @@ Canonical automation guide for the repository. User-facing installation and safe
 # Health and calibration
 python3 bookmark_sync.py --doctor all
 python3 bookmark_sync.py --calibrate edge
+
+# JSON result for automation
+bookmark-sync --from chrome --to edge safari --mode preview --json
 ```
+
+After installation with `python3 -m pip install --user .` or `pipx install .`, use `bookmark-sync` from any directory. Add `--json` when another Agent, script, or CI job needs a machine-readable result; human diagnostics are written to stderr.
 
 ## Verification
 

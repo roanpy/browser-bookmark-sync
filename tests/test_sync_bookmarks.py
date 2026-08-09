@@ -1,11 +1,12 @@
 import importlib.util
+import subprocess
 import sys
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "sync-bookmarks"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "sync_bookmarks.py"
 SPEC = importlib.util.spec_from_loader("sync_bookmarks", SourceFileLoader("sync_bookmarks", str(MODULE_PATH)))
 sync_bookmarks = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -120,6 +121,51 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         command = sync_bookmarks.build_passthrough_command(args)
 
         self.assertEqual(command, [sys.executable, str(sync_bookmarks.ENGINE), "--doctor", "edge"])
+
+    def test_json_parser_is_available_without_changing_engine_command(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(["--from", "chrome", "--to", "edge", "--json"])
+
+        command = sync_bookmarks.build_sync_command(args)
+
+        self.assertTrue(args.json)
+        self.assertNotIn("--json", command)
+
+    def test_json_summary_is_structured_without_raw_bookmark_names(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(["--from", "chrome", "--to", "edge", "--json"])
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                "Strategy: edge:Default -> direct (sync not active)\n"
+                "Synced chrome:Default -> edge:Default\n"
+                "Backup: ~/Downloads/bookmark-sync-backups/edge.bak\n"
+                "Result: 229 bookmarks\n"
+                "Verification: target matches source after the stabilization window.\n"
+            ),
+            stderr="",
+        )
+
+        payload = sync_bookmarks.build_json_result(
+            args,
+            result,
+            sync_bookmarks.json_metadata(args),
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["source"], "chrome:Default")
+        self.assertEqual(payload["targets"], ["edge:Default"])
+        self.assertEqual(
+            payload["results"],
+            [{
+                "target": "edge:Default",
+                "bookmarks": 229,
+                "verification": "target matches source after the stabilization window.",
+            }],
+        )
+        self.assertEqual(payload["backups"], ["~/Downloads/bookmark-sync-backups/edge.bak"])
+        self.assertNotIn("bookmark title", payload)
 
 
 if __name__ == "__main__":

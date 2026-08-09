@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Clarify the project's motivation and the cross-browser/cloud-reinjection problem on the homepage.
+- Add an installable `bookmark-sync` CLI entry point for scripts, agents, and CI.
+- Add `--json` output with exit codes, strategies, backups, results, and verification summaries on stdout; detailed logs remain on stderr.
+
 ## [0.1.0] - 2026-08-09
 
 Initial public source release.
