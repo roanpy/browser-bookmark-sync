@@ -1,6 +1,9 @@
 import importlib.util
+import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -15,6 +18,42 @@ SPEC.loader.exec_module(sync_bookmarks)
 
 
 class SyncBookmarksWrapperTests(unittest.TestCase):
+    @staticmethod
+    def write_synthetic_chromium_bookmarks(home: Path, browser_dir: str) -> None:
+        bookmark_file = home / "Library" / "Application Support" / browser_dir / "Default" / "Bookmarks"
+        bookmark_file.parent.mkdir(parents=True)
+        root = {
+            "children": [
+                {
+                    "date_added": "13200000000000000",
+                    "guid": "synthetic-example-guid",
+                    "id": "3",
+                    "name": "Synthetic Example",
+                    "type": "url",
+                    "url": "https://example.invalid/",
+                }
+            ],
+            "date_added": "13200000000000000",
+            "date_modified": "13200000000000000",
+            "guid": "synthetic-root-guid",
+            "id": "1",
+            "name": "Bookmarks bar",
+            "type": "folder",
+        }
+        empty_root = {
+            **root,
+            "children": [],
+            "guid": f"{browser_dir}-empty-root-guid",
+            "id": "2",
+            "name": "Other bookmarks",
+        }
+        raw = {
+            "checksum": "",
+            "roots": {"bookmark_bar": root, "other": empty_root, "synced": empty_root},
+            "version": 1,
+        }
+        bookmark_file.write_text(json.dumps(raw), encoding="utf-8")
+
     def test_default_target_ids_excludes_source(self) -> None:
         self.assertEqual(sync_bookmarks.default_target_ids("chrome:Default"), ["edge:Default", "safari"])
 
@@ -166,6 +205,48 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         )
         self.assertEqual(payload["backups"], ["~/Downloads/bookmark-sync-backups/edge.bak"])
         self.assertNotIn("bookmark title", payload)
+
+    def test_json_cli_keeps_stdout_machine_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            self.write_synthetic_chromium_bookmarks(home, "Google/Chrome")
+            self.write_synthetic_chromium_bookmarks(home, "Microsoft Edge")
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "BOOKMARK_SYNC_HOME": str(home),
+                    "BOOKMARK_SYNC_DATA_DIR": str(home / "state"),
+                    "BOOKMARK_SYNC_BACKUP_DIR": str(home / "backups"),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--from",
+                    "chrome",
+                    "--to",
+                    "edge",
+                    "--mode",
+                    "preview",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema"], 1)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["source"], "chrome:Default")
+            self.assertEqual(payload["targets"], ["edge:Default"])
+            self.assertNotIn("Synthetic Example", result.stdout)
+            self.assertNotIn("https://example.invalid/", result.stdout)
+            self.assertIn("Synthetic Example", result.stderr)
 
 
 if __name__ == "__main__":
