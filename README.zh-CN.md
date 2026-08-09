@@ -68,6 +68,12 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
+无需克隆仓库，也可以直接安装已发布的 `v0.1.1` wheel：
+
+```bash
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.1.1/bookmark_sync-0.1.1-py3-none-any.whl
+```
+
 不保留源码目录也可以安装可调用 CLI：
 
 ```bash
@@ -145,7 +151,7 @@ ruff check .
 
 自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验、命令封装和真实 JSON CLI 子进程协议。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前源码已准备进入 `v0.1.1`；在 `v0.1.1` 标签发布完成前，最新公开版本仍是 `v0.1.0`。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.1.1`。
 
 提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
 
