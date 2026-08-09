@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+OUTPUT=${1:-"$SCRIPT_DIR/dist/Bookmark Sync.app"}
+RESOURCE_DIR="$OUTPUT/Contents/Resources/bin"
+
+mkdir -p "$(dirname -- "$OUTPUT")"
+osacompile -o "$OUTPUT" "$SCRIPT_DIR/bookmark-sync-app.applescript"
+mkdir -p "$RESOURCE_DIR"
+cp "$SCRIPT_DIR/bookmark_sync.py" "$RESOURCE_DIR/bookmark_sync.py"
+cp "$SCRIPT_DIR/sync-bookmarks" "$RESOURCE_DIR/sync-bookmarks"
+chmod +x "$RESOURCE_DIR/bookmark_sync.py" "$RESOURCE_DIR/sync-bookmarks"
+codesign --force --deep --sign - "$OUTPUT"
+printf 'Built %s\n' "$OUTPUT"

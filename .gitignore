@@ -1,0 +1,13 @@
+.DS_Store
+.bookmark-sync-state.json
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.bak
+*.backup
+bookmark-sync-backups/
+state.json
+Bookmark Sync.app/
+dist/
