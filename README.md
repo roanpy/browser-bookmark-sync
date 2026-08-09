@@ -128,6 +128,8 @@ open "dist/Bookmark Sync.app"
 
 The app confirms source, targets, browser closing, backups, and possible cloud purge before running. Public binary distribution still requires a Developer ID signature and Apple notarization; this repository publishes source, not a notarized binary.
 
+The tag-driven signed release workflow is documented in [RELEASING.md](RELEASING.md). It uses GitHub Actions secrets for Apple credentials and never stores certificates, passwords, or tokens in the repository.
+
 ## Safety and privacy
 
 - Cloud purge always requires `--allow-cloud-purge` and cannot be combined with `--no-backup`.
@@ -148,9 +150,9 @@ python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 
-The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, and wrapper commands. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
+The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, wrapper commands, and the real JSON CLI subprocess contract. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
 
-See [CHANGELOG.md](CHANGELOG.md) for the version history. The first public source release is `v0.1.0`.
+See [CHANGELOG.md](CHANGELOG.md) for the version history. The source tree is prepared for `v0.1.1`; the latest published release remains `v0.1.0` until the signed tag workflow completes.
 
 Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md](TEST_MATRIX.md) before submitting browser or recovery changes.
 

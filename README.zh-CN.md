@@ -117,6 +117,8 @@ open "dist/Bookmark Sync.app"
 
 应用会在运行前确认来源、目标、浏览器关闭、备份和可能的云端清空。公开分发二进制仍需要 Developer ID 签名和 Apple 公证；当前仓库发布源码，不提供已公证安装包。
 
+带标签的签名发布流程见 [RELEASING.md](RELEASING.md)。流程使用 GitHub Actions Secrets 保存 Apple 凭据，仓库中不会存储证书、密码或 Token。
+
 ## 安全与隐私
 
 - 云端清空必须显式传入 `--allow-cloud-purge`，并禁止与 `--no-backup` 同时使用。
@@ -137,9 +139,9 @@ python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 
-自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验和命令封装。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
+自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验、命令封装和真实 JSON CLI 子进程协议。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前首个公开源码版本为 `v0.1.0`。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前源码已准备进入 `v0.1.1`；在签名标签流程完成前，最新公开版本仍是 `v0.1.0`。
 
 提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
 
