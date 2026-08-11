@@ -576,6 +576,43 @@ def backup_target(target: BrowserStore) -> Path:
     return backup_path
 
 
+def print_backup_list() -> int:
+    backups: list[tuple[datetime, Path, str]] = []
+    if DOWNLOAD_BACKUP_DIR.exists():
+        for path in DOWNLOAD_BACKUP_DIR.iterdir():
+            if not path.is_file() or path.suffix not in {".bak", ".plist"}:
+                continue
+            if len(path.name) < 24 or path.name[22] != "-":
+                continue
+            try:
+                created = datetime.strptime(path.name[:22], "%Y%m%d-%H%M%S-%f")
+            except ValueError:
+                continue
+            target = path.name[23 : -len(path.suffix)].replace("_", ":", 1)
+            backups.append((created, path, target))
+
+    if not backups:
+        print(f"No backups found in {display_path(DOWNLOAD_BACKUP_DIR)}")
+        return 0
+
+    now = datetime.now()
+    for index, (created, path, target) in enumerate(sorted(backups, reverse=True), start=1):
+        seconds = max(0, int((now - created).total_seconds()))
+        if seconds < 60:
+            age = f"{seconds}s"
+        elif seconds < 3600:
+            age = f"{seconds // 60}m"
+        elif seconds < 86400:
+            age = f"{seconds // 3600}h"
+        else:
+            age = f"{seconds // 86400}d"
+        print(
+            f"[{index}] target={target} created={created.isoformat(timespec='seconds')} "
+            f"age={age} size={path.stat().st_size} path={display_path(path)}"
+        )
+    return 0
+
+
 def maybe_backup_target(target: BrowserStore, enabled: bool) -> Path | None:
     if not enabled:
         return None
@@ -1941,6 +1978,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Detect supported local browser bookmarks, compare freshness/fullness, optionally remember a primary browser, and sync with confirmation."
     )
     parser.add_argument("--list", action="store_true", help="List detected bookmark stores and suggestions")
+    parser.add_argument("--list-backups", action="store_true", help="List available backups, newest first")
     parser.add_argument("--set-primary", help="Remember this browser/profile as the default source for future interactive runs")
     parser.add_argument("--source", help="Source store id, for example chrome:Default, edge:Default, or safari")
     parser.add_argument("--targets", help="Comma-separated target store ids")
@@ -2089,6 +2127,9 @@ register_browser_profile(
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.list_backups:
+        return print_backup_list()
 
     stores = detect_browser_stores()
     if not stores:

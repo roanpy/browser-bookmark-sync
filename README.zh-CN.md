@@ -93,9 +93,11 @@ Agent 和 CI 可以从 stdout 读取 JSON，详细人工日志会写到 stderr�
 
 ```bash
 bookmark-sync --from chrome --to edge safari --mode preview --json
+bookmark-sync --doctor edge --json
+bookmark-sync --list-backups --json
 ```
 
-JSON 协议带有版本号，包含操作、退出码、选定书签库、策略、备份路径、结果数量和校验摘要，不包含书签标题或 URL。
+JSON 协议带有版本号，包含操作、退出码、选定书签库、策略、备份路径、doctor 诊断、结果数量和校验摘要，不包含书签标题或 URL。`--list-backups` 即使在没有可用浏览器书签库时也能工作，并按新到旧返回目标、创建时间、备份年龄、大小和路径。
 
 严格同步；请先关闭相关浏览器，或明确允许工具自动关闭：
 

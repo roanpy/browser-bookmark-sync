@@ -102,9 +102,11 @@ Agent and CI integrations can consume JSON on stdout; detailed human diagnostics
 
 ```bash
 bookmark-sync --from chrome --to edge safari --mode preview --json
+bookmark-sync --doctor edge --json
+bookmark-sync --list-backups --json
 ```
 
-The JSON schema is versioned and reports the operation, exit code, selected stores, strategies, backup paths, result counts, and verification summaries. It never includes bookmark titles or URLs.
+The JSON schema is versioned and reports the operation, exit code, selected stores, strategies, backup paths, doctor diagnostics, result counts, and verification summaries. It never includes bookmark titles or URLs. `--list-backups` works even when no browser store is currently available and returns backups newest first with target, creation time, age, size, and path.
 
 Run a strict sync. Close affected browsers first, or explicitly let the tool close them:
 

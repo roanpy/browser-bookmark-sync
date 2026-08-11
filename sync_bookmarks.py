@@ -52,7 +52,7 @@ def resolve_source(args: argparse.Namespace) -> str:
         raise SystemExit("Use either positional SOURCE or --from, not both.")
     source = args.from_ or args.source
     if not source:
-        raise SystemExit("source is required unless --list, --doctor, or --calibrate is used")
+        raise SystemExit("source is required unless --list, --list-backups, --doctor, or --calibrate is used")
     return normalize_store_alias(source)
 
 
@@ -121,6 +121,9 @@ def build_passthrough_command(args: argparse.Namespace) -> list[str]:
     if args.list:
         command.append("--list")
         return command
+    if args.list_backups:
+        command.append("--list-backups")
+        return command
     if args.doctor is not None:
         command.extend(["--doctor", args.doctor])
         return command
@@ -133,6 +136,8 @@ def build_passthrough_command(args: argparse.Namespace) -> list[str]:
 def operation_name(args: argparse.Namespace) -> str:
     if args.list:
         return "list"
+    if args.list_backups:
+        return "list_backups"
     if args.doctor is not None:
         return "doctor"
     if args.calibrate is not None:
@@ -173,10 +178,90 @@ def _parse_json_summary(output: str, metadata: dict[str, object]) -> dict[str, o
     strategies: list[dict[str, str]] = []
     results: list[dict[str, object]] = []
     stores: list[dict[str, object]] = []
+    backup_files: list[dict[str, object]] = []
+    doctor: list[dict[str, object]] = []
     current_result: dict[str, object] | None = None
+    current_doctor: dict[str, object] | None = None
 
     for line in lines:
         stripped = line.strip()
+        doctor_header = re.match(r"^\[([a-z]+)\]$", stripped)
+        if doctor_header:
+            current_doctor = {"browser": doctor_header.group(1)}
+            doctor.append(current_doctor)
+
+        backup_file_match = re.match(
+            r"^\[\d+\] target=(\S+) created=(\S+) age=(\S+) size=(\d+) path=(.+)$",
+            stripped,
+        )
+        if backup_file_match:
+            backup_files.append(
+                {
+                    "target": backup_file_match.group(1),
+                    "created": backup_file_match.group(2),
+                    "age": backup_file_match.group(3),
+                    "size": int(backup_file_match.group(4)),
+                    "path": backup_file_match.group(5),
+                }
+            )
+
+        if current_doctor is not None:
+            sync_match = re.match(r"^Current sync state: (enabled|disabled) \((.+)\)$", stripped)
+            if sync_match:
+                current_doctor["sync_enabled"] = sync_match.group(1) == "enabled"
+                current_doctor["sync_reason"] = sync_match.group(2)
+            issue_match = re.match(r"^Known cloud issue: (none recorded|yes \((.*)\))$", stripped)
+            if issue_match:
+                current_doctor["cloud_issue"] = issue_match.group(1) != "none recorded"
+                if issue_match.group(2) is not None:
+                    current_doctor["cloud_issue_reason"] = issue_match.group(2)
+            stabilization_match = re.match(
+                r"^Stabilization profile: settle=([\d.]+)s poll=([\d.]+)s stable_passes=(\d+)$",
+                stripped,
+            )
+            if stabilization_match:
+                current_doctor["stabilization"] = {
+                    "settle_seconds": float(stabilization_match.group(1)),
+                    "poll_interval": float(stabilization_match.group(2)),
+                    "stable_passes": int(stabilization_match.group(3)),
+                }
+            repair_match = re.match(r"^Repair profile: max_attempts=(\d+) retry_wait=([\d.]+)s$", stripped)
+            if repair_match:
+                current_doctor["repair"] = {
+                    "max_attempts": int(repair_match.group(1)),
+                    "retry_wait_seconds": float(repair_match.group(2)),
+                }
+            elif stripped == "Repair profile: none":
+                current_doctor["repair"] = None
+            observations_match = re.match(
+                r"^Observations: (\d+), exact_match=(\d+), external_changes=(\d+), repaired=(\d+), unstable=(\d+)$",
+                stripped,
+            )
+            if observations_match:
+                current_doctor["observations"] = {
+                    "total": int(observations_match.group(1)),
+                    "exact_match": int(observations_match.group(2)),
+                    "external_changes": int(observations_match.group(3)),
+                    "repaired": int(observations_match.group(4)),
+                    "unstable": int(observations_match.group(5)),
+                }
+            elif stripped == "Observations: none yet":
+                current_doctor["observations"] = {"total": 0}
+            passes_match = re.match(r"^Max verification passes: (\d+)$", stripped)
+            if passes_match:
+                current_doctor["max_verification_passes"] = int(passes_match.group(1))
+            last_run_match = re.match(
+                r"^Last run: target=(\S+) mode=(\S+) matches=(True|False) repairs=(\d+) at=(\S+)$",
+                stripped,
+            )
+            if last_run_match:
+                current_doctor["last_run"] = {
+                    "target": last_run_match.group(1),
+                    "mode": last_run_match.group(2),
+                    "matches": last_run_match.group(3) == "True",
+                    "repairs": int(last_run_match.group(4)),
+                    "at": last_run_match.group(5),
+                }
         for prefix in BACKUP_PREFIXES:
             if stripped.startswith(prefix):
                 _append_unique(backups, stripped[len(prefix) :].strip())
@@ -238,6 +323,10 @@ def _parse_json_summary(output: str, metadata: dict[str, object]) -> dict[str, o
         payload["results"] = results
     if stores:
         payload["stores"] = stores
+    if metadata.get("operation") == "list_backups":
+        payload["backup_files"] = backup_files
+    if doctor:
+        payload["doctor"] = doctor
     return payload
 
 
@@ -270,6 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("targets", nargs="*", help="Optional target browser aliases/ids; defaults to all other supported browsers")
     parser.add_argument("--list", action="store_true", help="List detected bookmark stores")
+    parser.add_argument("--list-backups", action="store_true", help="List available backups, newest first")
     parser.add_argument("--doctor", nargs="?", const="all", help="Run the health report for one browser or all")
     parser.add_argument("--calibrate", nargs="?", const="all", help="Calibrate stabilization profiles for one browser or all")
     parser.add_argument("--restore-backup", help="Restore a backup file")
@@ -313,7 +403,7 @@ def main() -> int:
         metadata = json_metadata(args) if args.json else {}
         if args.restore_backup or args.restore_target:
             command = build_restore_command(args)
-        elif args.list or args.doctor is not None or args.calibrate is not None:
+        elif args.list or args.list_backups or args.doctor is not None or args.calibrate is not None:
             command = build_passthrough_command(args)
         else:
             command = build_sync_command(args)

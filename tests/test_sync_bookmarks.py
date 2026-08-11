@@ -206,6 +206,63 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         self.assertEqual(payload["backups"], ["~/Downloads/bookmark-sync-backups/edge.bak"])
         self.assertNotIn("bookmark title", payload)
 
+    def test_doctor_json_is_structured(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(["--doctor", "edge", "--json"])
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                "[edge]\n"
+                "Current sync state: enabled (bookmarks=on, setup=done)\n"
+                "Known cloud issue: yes (cloud reinjection)\n"
+                "Stabilization profile: settle=8.0s poll=2.0s stable_passes=2\n"
+                "Repair profile: max_attempts=2 retry_wait=3.0s\n"
+                "Observations: 3, exact_match=2, external_changes=1, repaired=1, unstable=0\n"
+                "Max verification passes: 4\n"
+                "Last run: target=edge:Default mode=strict matches=True repairs=1 at=2026-08-11T09:50:13\n"
+            ),
+            stderr="",
+        )
+
+        payload = sync_bookmarks.build_json_result(args, result, sync_bookmarks.json_metadata(args))
+
+        report = payload["doctor"][0]
+        self.assertEqual(report["browser"], "edge")
+        self.assertTrue(report["sync_enabled"])
+        self.assertTrue(report["cloud_issue"])
+        self.assertEqual(report["observations"]["external_changes"], 1)
+        self.assertEqual(report["last_run"]["target"], "edge:Default")
+
+    def test_list_backups_json_works_without_browser_stores(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            backup_dir = home / "backups"
+            backup_dir.mkdir()
+            (backup_dir / "20260810-100000-000000-safari.plist").write_bytes(b"safari")
+            (backup_dir / "20260811-100000-000000-edge_Default.bak").write_bytes(b"edge")
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "BOOKMARK_SYNC_HOME": str(home),
+                    "BOOKMARK_SYNC_BACKUP_DIR": str(backup_dir),
+                }
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(MODULE_PATH), "--list-backups", "--json"],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["operation"], "list_backups")
+        self.assertEqual([item["target"] for item in payload["backup_files"]], ["edge:Default", "safari"])
+        self.assertEqual(payload["backup_files"][0]["size"], 4)
+
     def test_json_cli_keeps_stdout_machine_readable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
