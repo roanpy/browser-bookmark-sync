@@ -35,6 +35,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 - **Different browser formats:** Chromium browsers use JSON bookmark trees while Safari uses a property list with different roots and metadata. A portable tree maps bookmark bar, menu, folders, URLs, and supported synced roots without copying one browser's raw file into another.
 - **Identity churn:** unchanged Chromium IDs/GUIDs and Safari UUIDs are reused when nodes match, reducing needless delete/recreate behavior and cloud-sync noise.
 - **Unsafe one-shot scripts:** every target is backed up by default, writes are atomic, results are reloaded and compared, and restore creates its own rollback backup.
+- **Interrupted or concurrent writes:** a process lock prevents two writers from racing, and unfinished backed-up operations block new writes until `--recover` restores the target or the user explicitly keeps the current state.
 - **Browser timing differences:** stabilization observations, `doctor`, and `calibrate` provide browser-specific verification instead of assuming one fixed delay works everywhere.
 
 ## Key advantages
@@ -43,7 +44,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 | --- | --- |
 | Explicit direction | Choose any detected supported browser as source and one or more targets. |
 | Two sync strategies | Fast direct writes for normal/local profiles; cloud-safe remediation only for confirmed Chrome/Edge reinjection cases. |
-| Data-loss guards | Target backup, `0600` permissions, atomic replacement, post-write verification, and verified restore with rollback. |
+| Data-loss guards | Target backup, `0600` permissions, single-writer lock, interruption recovery, atomic replacement, post-write verification, and verified restore with rollback. |
 | Local-first privacy | No telemetry, API key, hosted service, or bookmark upload. Runtime state stores hashes and timing observations, not URLs. |
 | Agent-friendly interface | Installable deterministic CLI with stable JSON output plus optional Codex/Hermes Skill instructions. The Skill is an adapter; the CLI remains the product core. |
 | Extensible registry | Browser detection and format handlers are registered separately, so another Chromium browser can reuse the existing handler. |
@@ -77,10 +78,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-Install the published `v0.1.1` wheel without cloning the repository:
+Install the published `v0.2.0` wheel without cloning the repository:
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.1.1/bookmark_sync-0.1.1-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.0/bookmark_sync-0.2.0-py3-none-any.whl
 ```
 
 Install the callable CLI without keeping a repository checkout:
@@ -104,6 +105,7 @@ Agent and CI integrations can consume JSON on stdout; detailed human diagnostics
 bookmark-sync --from chrome --to edge safari --mode preview --json
 bookmark-sync --doctor edge --json
 bookmark-sync --list-backups --json
+bookmark-sync --version
 ```
 
 The JSON schema is versioned and reports the operation, exit code, selected stores, strategies, backup paths, doctor diagnostics, result counts, and verification summaries. It never includes bookmark titles or URLs. `--list-backups` works even when no browser store is currently available and returns backups newest first with target, creation time, age, size, and path.
@@ -136,6 +138,14 @@ Restore a backup; the current target is backed up again before restoration:
   --restore-target edge --auto-close
 ```
 
+If a backed-up write is interrupted, new writes stop until the recorded target is resolved:
+
+```bash
+bookmark-sync --recover --auto-close
+```
+
+Use `--discard-recovery` only after inspecting the target and backup and explicitly deciding to keep the current target; it clears the recovery record without changing bookmarks.
+
 Backups default to `~/Downloads/bookmark-sync-backups`. Runtime state defaults to `~/Library/Application Support/Bookmark Sync/state.json`. Override them with `BOOKMARK_SYNC_BACKUP_DIR` and `BOOKMARK_SYNC_DATA_DIR`; `BOOKMARK_SYNC_HOME` is available for isolated tests.
 
 ## macOS app
@@ -166,14 +176,14 @@ The temporary Chrome/Edge extension uses the documented Chromium `bookmarks` API
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
+python3 -m py_compile bookmark_sync.py bookmark_sync_version.py sync_bookmarks.py sync-bookmarks
 python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 
 The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, wrapper commands, and the real JSON CLI subprocess contract. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
 
-See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.1.1`.
+See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.2.0`.
 
 Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md](TEST_MATRIX.md) before submitting browser or recovery changes.
 

@@ -19,15 +19,15 @@ Protect `v*` tags so only maintainers can start the signing workflow. The workfl
 
 ## Release Steps
 
-1. Confirm `main` is clean and the version in `pyproject.toml`, README files, and `CHANGELOG.md` is aligned.
+1. Confirm `main` is clean and `bookmark_sync_version.py`, README files, and `CHANGELOG.md` are aligned.
 2. Run the local validation commands from `CONTRIBUTING.md`.
 3. Create and push an annotated tag:
 
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
 The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured and approved, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.

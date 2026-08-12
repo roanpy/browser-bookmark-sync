@@ -18,8 +18,9 @@ jobs:
           python-version: "3.11"
       - run: python3 -m pip install --disable-pip-version-check "ruff==0.15.8"
       - run: python3 -m unittest discover -s tests
-      - run: python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
+      - run: python3 -m py_compile bookmark_sync.py bookmark_sync_version.py sync_bookmarks.py sync-bookmarks
       - run: python3 -m pip wheel --disable-pip-version-check --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
+      - run: python3 -m pip install --disable-pip-version-check --no-deps /tmp/bookmark-sync-wheel/*.whl && bookmark-sync --version
       - run: ruff check .
       - run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "release.yml YAML parsed"'
       - run: ./build-macos-app "$RUNNER_TEMP/Bookmark Sync.app"

@@ -29,6 +29,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 - Browsers must be closed. Pass `--auto-close` only with user authorization.
 - Cloud-safe temporarily clears target cloud bookmarks. Pass `--allow-cloud-purge` only after explicit user authorization.
 - If cloud purge fails, report whether the pre-purge local backup was restored and include its path.
+- Resolve unfinished operations with `--recover` before new writes; use `--discard-recovery` only with explicit user approval after inspection.
 - Prefer `--mode strict` for real syncs.
 - Use `--restore-backup` with `--restore-target` to restore; restoration creates a rollback backup first.
 - Brave, Vivaldi, and Opera account-synced profiles are not calibrated and should not be targeted as cloud-synced stores.
@@ -52,6 +53,7 @@ bookmark-sync --list-backups --json
 
 # Restore a target from backup
 ./sync-bookmarks --restore-backup /path/to/backup --restore-target edge --auto-close
+bookmark-sync --recover --auto-close
 
 # Health and calibration
 bookmark-sync --doctor all --json

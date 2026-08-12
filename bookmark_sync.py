@@ -3,30 +3,35 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import hashlib
 import json
 import os
 import plistlib
-import shutil
 import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
+
+from bookmark_sync_version import __version__
 
 HOME = Path(os.environ.get("BOOKMARK_SYNC_HOME", Path.home())).expanduser()
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BOOKMARK_SYNC_DATA_DIR", HOME / "Library" / "Application Support" / "Bookmark Sync")).expanduser()
 DOWNLOAD_BACKUP_DIR = Path(os.environ.get("BOOKMARK_SYNC_BACKUP_DIR", HOME / "Downloads" / "bookmark-sync-backups")).expanduser()
 STATE_FILE = DATA_DIR / "state.json"
+LOCK_FILE = DATA_DIR / "operation.lock"
 PRIMARY_STORE_STATE_KEY = "_primary_store_id"
 SYNC_BASELINES_STATE_KEY = "_sync_baselines"
 SYNC_OBSERVATIONS_STATE_KEY = "_sync_observations"
 BROWSER_PROFILE_OVERRIDES_STATE_KEY = "_browser_profile_overrides"
 TARGET_ISSUES_STATE_KEY = "_target_issues"
+PENDING_OPERATION_STATE_KEY = "_pending_operation"
 SAFARI_BOOKMARKS = HOME / "Library" / "Safari" / "Bookmarks.plist"
 POST_OPEN_CHECK_PROFILES = {
     "chrome": {"delay_seconds": 20.0, "poll_interval": 5.0, "max_checks": 8},
@@ -373,6 +378,7 @@ def load_state() -> dict[str, Any]:
             SYNC_OBSERVATIONS_STATE_KEY,
             BROWSER_PROFILE_OVERRIDES_STATE_KEY,
             TARGET_ISSUES_STATE_KEY,
+            PENDING_OPERATION_STATE_KEY,
         }
     }
     nested_baselines = raw_state.get(SYNC_BASELINES_STATE_KEY)
@@ -398,6 +404,9 @@ def load_state() -> dict[str, Any]:
         state[TARGET_ISSUES_STATE_KEY] = target_issues
     else:
         state[TARGET_ISSUES_STATE_KEY] = {}
+    pending_operation = raw_state.get(PENDING_OPERATION_STATE_KEY)
+    if isinstance(pending_operation, dict):
+        state[PENDING_OPERATION_STATE_KEY] = pending_operation
     return state
 
 
@@ -410,7 +419,75 @@ def save_state(state: dict[str, Any]) -> None:
     payload[SYNC_OBSERVATIONS_STATE_KEY] = state.get(SYNC_OBSERVATIONS_STATE_KEY, [])
     payload[BROWSER_PROFILE_OVERRIDES_STATE_KEY] = state.get(BROWSER_PROFILE_OVERRIDES_STATE_KEY, {})
     payload[TARGET_ISSUES_STATE_KEY] = state.get(TARGET_ISSUES_STATE_KEY, {})
+    pending_operation = state.get(PENDING_OPERATION_STATE_KEY)
+    if isinstance(pending_operation, dict):
+        payload[PENDING_OPERATION_STATE_KEY] = pending_operation
     atomic_write_text(STATE_FILE, json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+@contextmanager
+def operation_lock() -> Iterator[None]:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    handle = LOCK_FILE.open("a+", encoding="utf-8")
+    locked = False
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except BlockingIOError as exc:
+            handle.seek(0)
+            owner = handle.read().strip()
+            detail = f" (pid {owner})" if owner else ""
+            raise SystemExit(f"Another bookmark-sync write operation is already running{detail}") from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        LOCK_FILE.chmod(0o600)
+        yield
+    finally:
+        if locked:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def get_pending_operation() -> dict[str, Any] | None:
+    pending = load_state().get(PENDING_OPERATION_STATE_KEY)
+    return pending if isinstance(pending, dict) else None
+
+
+def begin_pending_operation(target: BrowserStore, backup_path: Path | None, operation: str) -> bool:
+    if backup_path is None:
+        return False
+    state = load_state()
+    if isinstance(state.get(PENDING_OPERATION_STATE_KEY), dict):
+        return False
+    state[PENDING_OPERATION_STATE_KEY] = {
+        "operation": operation,
+        "target": target.id,
+        "backup": str(backup_path),
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    save_state(state)
+    return True
+
+
+def clear_pending_operation(created: bool = True) -> None:
+    if not created:
+        return
+    state = load_state()
+    state.pop(PENDING_OPERATION_STATE_KEY, None)
+    save_state(state)
+
+
+def require_no_pending_operation() -> None:
+    pending = get_pending_operation()
+    if pending is None:
+        return
+    raise SystemExit(
+        f"Unfinished {pending.get('operation')} operation for {pending.get('target')}. "
+        "Run --recover to restore its backup or --discard-recovery to keep the current target."
+    )
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -579,7 +656,7 @@ def backup_target(target: BrowserStore) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     suffix = target.path.suffix or ".bak"
     backup_path = DOWNLOAD_BACKUP_DIR / f"{timestamp}-{target.id.replace(':', '_')}{suffix}"
-    shutil.copy2(target.path, backup_path)
+    atomic_write_bytes(backup_path, target.path.read_bytes())
     backup_path.chmod(0o600)
     return backup_path
 
@@ -1307,6 +1384,7 @@ def repair_sync_if_needed(source: BookmarkSnapshot, target: BrowserStore, mode: 
 
 def sync_store(source: BookmarkSnapshot, target: BrowserStore, mode: str, backup_enabled: bool = True) -> tuple[Path | None, SyncVerification]:
     backup_path = maybe_backup_target(target, backup_enabled)
+    pending_created = begin_pending_operation(target, backup_path, "sync")
     previous_baseline = get_recorded_baseline(source.store, target, mode)
     write_target_store(source, target, mode)
     verification = verify_snapshot_with_stabilization(target, source)
@@ -1321,6 +1399,7 @@ def sync_store(source: BookmarkSnapshot, target: BrowserStore, mode: str, backup
             f"Verification mismatch for {target.label}: expected about {source.bookmark_count} bookmarks, got {reloaded.bookmark_count}"
         )
     record_sync_baseline(source.store, target, mode, verification)
+    clear_pending_operation(pending_created)
     return backup_path, verification
 
 
@@ -1337,11 +1416,14 @@ def restore_store_backup(backup_path: Path, target: BrowserStore) -> tuple[Path,
     )
     expected = load_snapshot(backup_store)
     rollback_path = backup_target(target)
+    pending_created = begin_pending_operation(target, rollback_path, "restore")
     atomic_write_bytes(target.path, backup_path.read_bytes())
     restored = load_snapshot(target)
     if restored.portable != expected.portable:
         atomic_write_bytes(target.path, rollback_path.read_bytes())
+        clear_pending_operation(pending_created)
         raise SystemExit(f"Restore verification failed for {target.label}; current store was rolled back")
+    clear_pending_operation(pending_created)
     return rollback_path, restored
 
 
@@ -1355,19 +1437,21 @@ def require_cloud_purge_backup(backup_enabled: bool) -> None:
         raise SystemExit("Cloud bookmark purge cannot run with --no-backup")
 
 
-def rollback_failed_cloud_purge(target: BrowserStore, backup_path: Path) -> None:
+def rollback_failed_cloud_purge(target: BrowserStore, backup_path: Path) -> bool:
     try:
         ensure_browsers_closed({target.browser}, auto_close=True)
     except SystemExit as exc:
         print(f"Cloud purge rollback could not close {target.browser}: {exc}. Backup: {display_path(backup_path)}")
-        return
+        return False
 
     try:
         atomic_write_bytes(target.path, backup_path.read_bytes())
         restored = load_snapshot(target)
         print(f"Cloud purge failed; restored local {target.label} from {display_path(backup_path)} ({restored.bookmark_count} bookmarks).")
-    except (OSError, json.JSONDecodeError, plistlib.InvalidFileException) as exc:
+        return True
+    except (OSError, json.JSONDecodeError, plistlib.InvalidFileException, SystemExit) as exc:
         print(f"Cloud purge rollback failed for {target.label}: {exc}. Backup: {display_path(backup_path)}")
+        return False
 
 
 def reset_edge_cloud_via_empty_file_then_sync(
@@ -1382,6 +1466,7 @@ def reset_edge_cloud_via_empty_file_then_sync(
     require_cloud_purge_backup(backup_enabled)
 
     clear_backup = backup_target(target)
+    pending_created = begin_pending_operation(target, clear_backup, "cloud-safe")
     try:
         open_browser(target.browser)
         clear_chromium_bookmark_file(target)
@@ -1395,9 +1480,11 @@ def reset_edge_cloud_via_empty_file_then_sync(
 
         ensure_browsers_closed({target.browser}, auto_close=True)
         sync_backup, verification = sync_store(source, target, mode, backup_enabled=True)
+        clear_pending_operation(pending_created)
         return clear_backup, sync_backup, verification
     except BaseException:
-        rollback_failed_cloud_purge(target, clear_backup)
+        if rollback_failed_cloud_purge(target, clear_backup):
+            clear_pending_operation(pending_created)
         raise
 
 
@@ -1414,6 +1501,7 @@ def reset_chromium_cloud_via_api_then_sync(
     require_cloud_purge_backup(backup_enabled)
 
     clear_backup = backup_target(target)
+    pending_created = begin_pending_operation(target, clear_backup, "cloud-safe")
     try:
         with create_chromium_bookmark_purge_extension(purge_window_seconds) as extension_dir:
             print(f"{target.browser.capitalize()} API purge phase: launching the browser with a temporary bookmark-purge extension.")
@@ -1444,10 +1532,43 @@ def reset_chromium_cloud_via_api_then_sync(
 
         sync_backup, verification = sync_store(source, target, mode, backup_enabled=True)
         mark_cloud_issue(target, f"cloud-safe remediation succeeded for {target.id}")
+        clear_pending_operation(pending_created)
         return clear_backup, sync_backup, verification
     except BaseException:
-        rollback_failed_cloud_purge(target, clear_backup)
+        if rollback_failed_cloud_purge(target, clear_backup):
+            clear_pending_operation(pending_created)
         raise
+
+
+def recover_pending_operation(stores: list[BrowserStore], auto_close: bool) -> int:
+    pending = get_pending_operation()
+    if pending is None:
+        print("No unfinished bookmark operation found.")
+        return 0
+    target_id = pending.get("target")
+    backup_value = pending.get("backup")
+    if not isinstance(target_id, str) or not isinstance(backup_value, str):
+        raise SystemExit("Recovery record is incomplete; use --discard-recovery only after inspecting local backups")
+    target = next((store for store in stores if store.id == target_id), None)
+    if target is None:
+        raise SystemExit(f"Recovery target is not available: {target_id}")
+    ensure_browsers_closed({target.browser}, auto_close=auto_close)
+    rollback_path, restored = restore_store_backup(Path(backup_value), target)
+    clear_pending_operation()
+    print(f"Recovered {target.label} from {display_path(backup_value)}")
+    print(f"Rollback backup: {display_path(rollback_path)}")
+    print(f"Result: {restored.bookmark_count} bookmarks")
+    return 0
+
+
+def discard_pending_operation() -> int:
+    pending = get_pending_operation()
+    if pending is None:
+        print("No unfinished bookmark operation found.")
+        return 0
+    clear_pending_operation()
+    print(f"Discarded recovery record for {pending.get('target')}; current bookmarks were not changed.")
+    return 0
 
 
 def choose_one(prompt: str, items: list[BookmarkSnapshot], default_index: int) -> BookmarkSnapshot:
@@ -1571,30 +1692,31 @@ def run_post_open_check(
         raise SystemExit(f"Post-open check is not configured for {target.browser}")
 
     open_browser(target.browser)
-    time.sleep(profile["delay_seconds"])
+    try:
+        time.sleep(profile["delay_seconds"])
 
-    checks = 1
-    drift_detected = False
-    current = verify_snapshot_counts(target, source)
-    if not current.same_portable:
-        drift_detected = True
-
-    while checks < profile["max_checks"]:
-        time.sleep(profile["poll_interval"])
+        checks = 1
+        drift_detected = False
         current = verify_snapshot_counts(target, source)
-        checks += 1
         if not current.same_portable:
             drift_detected = True
+
+        while checks < profile["max_checks"]:
+            time.sleep(profile["poll_interval"])
+            current = verify_snapshot_counts(target, source)
+            checks += 1
+            if not current.same_portable:
+                drift_detected = True
+    finally:
+        ensure_browsers_closed({target.browser}, auto_close=True)
 
     current.verification_passes = checks
     if not drift_detected and current.same_portable:
         return False, None, current
 
     if not repair_on_drift:
-        ensure_browsers_closed({target.browser}, auto_close=True)
         return True, None, current
 
-    ensure_browsers_closed({target.browser}, auto_close=True)
     backup_path, repaired = sync_store(source, target, mode, backup_enabled=backup_enabled)
     return True, backup_path, repaired
 
@@ -1987,6 +2109,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--list", action="store_true", help="List detected bookmark stores and suggestions")
     parser.add_argument("--list-backups", action="store_true", help="List available backups, newest first")
+    recovery = parser.add_mutually_exclusive_group()
+    recovery.add_argument("--recover", action="store_true", help="Restore the target from an unfinished operation")
+    recovery.add_argument("--discard-recovery", action="store_true", help="Keep the current target and clear an unfinished operation")
     parser.add_argument("--set-primary", help="Remember this browser/profile as the default source for future interactive runs")
     parser.add_argument("--source", help="Source store id, for example chrome:Default, edge:Default, or safari")
     parser.add_argument("--targets", help="Comma-separated target store ids")
@@ -2051,6 +2176,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="preview only, normal mirror, or stricter local mirror",
     )
     parser.add_argument("--auto-close", action="store_true", help="Automatically quit running browsers before syncing")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
 
@@ -2139,12 +2265,24 @@ def main() -> int:
     if args.list_backups:
         return print_backup_list()
 
+    if args.discard_recovery:
+        with operation_lock():
+            return discard_pending_operation()
+
     stores = detect_browser_stores()
     if not stores:
         raise SystemExit("No supported browser bookmark stores found")
 
-    snapshots = [load_snapshot(store) for store in stores]
-    return noninteractive_mode(args, snapshots)
+    if args.recover:
+        with operation_lock():
+            return recover_pending_operation(stores, auto_close=args.auto_close)
+
+    read_only = args.list or args.doctor is not None or (args.source is not None and args.mode == "preview")
+    with nullcontext() if read_only else operation_lock():
+        if not read_only:
+            require_no_pending_operation()
+        snapshots = [load_snapshot(store) for store in stores]
+        return noninteractive_mode(args, snapshots)
 
 
 if __name__ == "__main__":

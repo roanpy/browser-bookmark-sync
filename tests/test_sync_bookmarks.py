@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -161,6 +163,30 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
 
         self.assertEqual(command, [sys.executable, str(sync_bookmarks.ENGINE), "--doctor", "edge"])
 
+    def test_build_passthrough_command_for_recovery(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(["--recover", "--auto-close"])
+
+        self.assertEqual(
+            sync_bookmarks.build_passthrough_command(args),
+            [sys.executable, str(sync_bookmarks.ENGINE), "--recover", "--auto-close"],
+        )
+
+    def test_recovery_actions_are_mutually_exclusive(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            sync_bookmarks.build_parser().parse_args(["--recover", "--discard-recovery"])
+
+    def test_version_matches_package_version(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), f"sync_bookmarks.py {sync_bookmarks.__version__}")
+
     def test_json_parser_is_available_without_changing_engine_command(self) -> None:
         parser = sync_bookmarks.build_parser()
         args = parser.parse_args(["--from", "chrome", "--to", "edge", "--json"])
@@ -208,6 +234,7 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         )
 
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["version"], sync_bookmarks.__version__)
         self.assertEqual(payload["source"], "chrome:Default")
         self.assertEqual(payload["targets"], ["edge:Default"])
         self.assertEqual(
