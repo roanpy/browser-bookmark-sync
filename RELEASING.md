@@ -4,7 +4,7 @@ Bookmark Sync releases are tag-driven. Without Apple credentials, the release wo
 
 ## Signed App Credentials
 
-To publish only source and wheel assets, no Apple credentials are required. To attach a signed and notarized macOS app, create a protected GitHub Environment named `release`, require reviewer approval, and configure these environment secrets before pushing a release tag:
+To publish only source and wheel assets, no Apple credentials are required. To attach a signed and notarized macOS app, create a protected GitHub Environment named `release`, restrict it to `v*` tags, and configure these environment secrets before pushing a release tag. A sole maintainer does not need a self-approval rule; teams should add independent reviewers.
 
 - `MACOS_CERTIFICATE_BASE64`: base64-encoded Developer ID Application `.p12` certificate.
 - `MACOS_CERTIFICATE_PASSWORD`: password for the `.p12` file.
@@ -15,7 +15,7 @@ To publish only source and wheel assets, no Apple credentials are required. To a
 
 Do not commit the certificate, passwords, API tokens, or exported keychain. The workflow fails if only part of the Apple credential set is configured; it otherwise falls back to the safe source-and-wheel release mode.
 
-Protect `v*` tags so only maintainers can start the signing workflow. The workflow checks out the tagged source and receives signing credentials only after the protected environment is approved.
+Protect `v*` tags from deletion and non-fast-forward updates so published releases cannot be rewritten. The workflow checks out the tagged source without persisting GitHub credentials and receives signing credentials only inside the restricted `release` environment.
 
 ## Release Steps
 
@@ -30,4 +30,4 @@ git tag -a v0.2.1 -m "Release v0.2.1"
 git push origin v0.2.1
 ```
 
-The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured and approved, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.
+The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.
