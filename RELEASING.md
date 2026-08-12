@@ -26,8 +26,8 @@ Protect `v*` tags so only maintainers can start the signing workflow. The workfl
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.2.0 -m "Release v0.2.0"
-git push origin v0.2.0
+git tag -a v0.2.1 -m "Release v0.2.1"
+git push origin v0.2.1
 ```
 
 The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured and approved, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.

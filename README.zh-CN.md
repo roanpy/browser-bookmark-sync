@@ -69,10 +69,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-无需克隆仓库，也可以直接安装已发布的 `v0.2.0` wheel：
+无需克隆仓库，也可以直接安装已发布的 `v0.2.1` wheel：
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.0/bookmark_sync-0.2.0-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.1/bookmark_sync-0.2.1-py3-none-any.whl
 ```
 
 不保留源码目录也可以安装可调用 CLI：
@@ -146,6 +146,8 @@ Skill 负责提供 Agent 安全边界与调用规则，实际执行入口仍是�
 open "dist/Bookmark Sync.app"
 ```
 
+App 内置启动器会禁止 Python 写入字节码，正常运行不会改动已签名资源。
+
 应用会在运行前确认来源、目标、浏览器关闭、备份和可能的云端清空。公开分发二进制仍需要 Developer ID 签名和 Apple 公证；当前仓库发布源码，不提供已公证安装包。
 
 带标签的发布流程见 [RELEASING.md](RELEASING.md)。没有 Apple 凭据时也可以发布源码和 wheel；只有完整配置 Apple 凭据后才会附加签名、公证的 macOS 应用。证书、密码和 Token 不会进入仓库。
@@ -172,7 +174,7 @@ ruff check .
 
 自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验、命令封装和真实 JSON CLI 子进程协议。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.2.0`。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.2.1`。
 
 提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
 

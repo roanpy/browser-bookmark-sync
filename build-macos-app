@@ -12,6 +12,8 @@ cp "$SCRIPT_DIR/bookmark_sync.py" "$RESOURCE_DIR/bookmark_sync.py"
 cp "$SCRIPT_DIR/bookmark_sync_version.py" "$RESOURCE_DIR/bookmark_sync_version.py"
 cp "$SCRIPT_DIR/sync_bookmarks.py" "$RESOURCE_DIR/sync_bookmarks.py"
 cp "$SCRIPT_DIR/sync-bookmarks" "$RESOURCE_DIR/sync-bookmarks"
+find "$RESOURCE_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+find "$RESOURCE_DIR" -type d -name __pycache__ -empty -delete
 chmod +x "$RESOURCE_DIR/bookmark_sync.py" "$RESOURCE_DIR/sync-bookmarks"
 codesign --force --deep --sign - "$OUTPUT"
 printf 'Built %s\n' "$OUTPUT"
