@@ -170,6 +170,21 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         self.assertTrue(args.json)
         self.assertNotIn("--json", command)
 
+    def test_json_cli_reports_argument_validation_errors(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "--from", "unknown", "--to", "edge", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["operation"], "sync")
+        self.assertIn("Unsupported browser alias or id", payload["error"])
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_json_summary_is_structured_without_raw_bookmark_names(self) -> None:
         parser = sync_bookmarks.build_parser()
         args = parser.parse_args(["--from", "chrome", "--to", "edge", "--json"])

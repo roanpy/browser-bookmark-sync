@@ -99,6 +99,15 @@ bookmark-sync --list-backups --json
 
 JSON 协议带有版本号，包含操作、退出码、选定书签库、策略、备份路径、doctor 诊断、结果数量和校验摘要，不包含书签标题或 URL。`--list-backups` 即使在没有可用浏览器书签库时也能工作，并按新到旧返回目标、创建时间、备份年龄、大小和路径。
 
+Codex 可以安装仓库提供的可选 [Bookmark Sync Skill](skills/bookmark-sync/SKILL.md)：
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync"
+cp skills/bookmark-sync/SKILL.md "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync/SKILL.md"
+```
+
+Skill 负责提供 Agent 安全边界与调用规则，实际执行入口仍是已安装的 `bookmark-sync` CLI。
+
 严格同步；请先关闭相关浏览器，或明确允许工具自动关闭：
 
 ```bash

@@ -122,7 +122,9 @@ jobs:
       - name: Create checksums
         run: |
           set -eu
-          shasum -a 256 dist/* > dist/SHA256SUMS
+          (cd dist && shasum -a 256 *) > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" dist/SHA256SUMS
+          (cd dist && shasum -a 256 -c SHA256SUMS)
 
       - name: Publish GitHub Release
         env:

@@ -216,7 +216,11 @@ def chromium_node_to_portable(node: dict[str, Any]) -> dict[str, Any] | None:
 
 def load_chromium_snapshot(store: BrowserStore) -> BookmarkSnapshot:
     raw = json.loads(store.path.read_text())
-    roots = raw.get("roots", {})
+    if not isinstance(raw, dict):
+        raise SystemExit(f"Invalid Chromium bookmark store: {store.label}")
+    roots = raw.get("roots")
+    if not isinstance(roots, dict) or not all(isinstance(roots.get(key), dict) for key in ("bookmark_bar", "other")):
+        raise SystemExit(f"Chromium bookmark store is missing required roots: {store.label}")
     portable = {
         "bar": [
             converted
@@ -284,8 +288,12 @@ def find_safari_root(raw: dict[str, Any], title: str) -> dict[str, Any] | None:
 def load_safari_snapshot(store: BrowserStore) -> BookmarkSnapshot:
     with store.path.open("rb") as handle:
         raw = plistlib.load(handle)
+    if not isinstance(raw, dict):
+        raise SystemExit(f"Invalid Safari bookmark store: {store.label}")
     bookmarks_bar = find_safari_root(raw, "BookmarksBar")
     bookmarks_menu = find_safari_root(raw, "BookmarksMenu")
+    if bookmarks_bar is None or bookmarks_menu is None:
+        raise SystemExit(f"Safari bookmark store is missing BookmarksBar or BookmarksMenu roots: {store.label}")
     portable = {
         "bar": [
             converted
