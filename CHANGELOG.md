@@ -4,6 +4,7 @@
 
 - Refresh release and security wording after publishing `v0.1.1`.
 - Add direct wheel installation guidance, a feature-request template, and Dependabot configuration.
+- Add newest-first backup discovery and structured JSON output for doctor diagnostics.
 
 ## [0.1.1] - 2026-08-09
 

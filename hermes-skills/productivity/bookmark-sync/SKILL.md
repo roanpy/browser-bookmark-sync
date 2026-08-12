@@ -31,11 +31,12 @@ After installation, use `bookmark-sync` from any directory. From a checkout, `./
 ```bash
 ./sync-bookmarks --list
 bookmark-sync --list --json
+bookmark-sync --list-backups --json
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ./sync-bookmarks --from chrome --to edge safari --auto-close
 ./sync-bookmarks --from chrome --to edge --auto-close --allow-cloud-purge
 ./sync-bookmarks --restore-backup /path/to/backup --restore-target edge --auto-close
-python3 bookmark_sync.py --doctor all
+bookmark-sync --doctor all --json
 python3 bookmark_sync.py --calibrate edge
 bookmark-sync --from chrome --to edge safari --mode preview --json
 ```
@@ -45,4 +46,5 @@ bookmark-sync --from chrome --to edge safari --mode preview --json
 - Sync output must include a target backup, bookmark result count, and stabilization result.
 - Restore output must include a rollback backup and result count.
 - Backups default to `~/Downloads/bookmark-sync-backups`.
+- Use `--list-backups` to select a restore candidate by target and creation time instead of guessing from filenames.
 - JSON mode writes only the versioned result object to stdout; human diagnostics remain on stderr. The JSON object never includes bookmark titles or URLs.
