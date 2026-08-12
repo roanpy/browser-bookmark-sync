@@ -11,6 +11,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 - App builder: `build-macos-app`
 - State: `~/Library/Application Support/Bookmark Sync/state.json`
 - Backups: `~/Downloads/bookmark-sync-backups`
+- Installable Codex Skill: `skills/bookmark-sync/SKILL.md`
 
 ## Supported browsers
 
@@ -38,6 +39,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 # Inspect
 ./sync-bookmarks --list
 bookmark-sync --list --json
+bookmark-sync --list-backups --json
 
 # Preview
 ./sync-bookmarks --from chrome --to edge safari --mode preview
@@ -52,14 +54,21 @@ bookmark-sync --list --json
 ./sync-bookmarks --restore-backup /path/to/backup --restore-target edge --auto-close
 
 # Health and calibration
-python3 bookmark_sync.py --doctor all
-python3 bookmark_sync.py --calibrate edge
+bookmark-sync --doctor all --json
+bookmark-sync --calibrate edge
 
 # JSON result for automation
 bookmark-sync --from chrome --to edge safari --mode preview --json
 ```
 
 After installation with `python3 -m pip install --user .` or `pipx install .`, use `bookmark-sync` from any directory. Add `--json` when another Agent, script, or CI job needs a machine-readable result; human diagnostics are written to stderr.
+
+Install the Codex Skill from a checkout with:
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync"
+cp skills/bookmark-sync/SKILL.md "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync/SKILL.md"
+```
 
 ## Verification
 

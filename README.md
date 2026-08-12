@@ -108,6 +108,15 @@ bookmark-sync --list-backups --json
 
 The JSON schema is versioned and reports the operation, exit code, selected stores, strategies, backup paths, doctor diagnostics, result counts, and verification summaries. It never includes bookmark titles or URLs. `--list-backups` works even when no browser store is currently available and returns backups newest first with target, creation time, age, size, and path.
 
+For Codex, install the repository's optional [Bookmark Sync Skill](skills/bookmark-sync/SKILL.md):
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync"
+cp skills/bookmark-sync/SKILL.md "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sync/SKILL.md"
+```
+
+The Skill supplies Agent safety and routing instructions; the installed `bookmark-sync` CLI remains the executable interface.
+
 Run a strict sync. Close affected browsers first, or explicitly let the tool close them:
 
 ```bash

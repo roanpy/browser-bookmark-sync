@@ -9,6 +9,7 @@
 - Keep JSON error output machine-readable during argument validation.
 - Make release checksums directly verifiable after downloading assets.
 - Require a patched Setuptools release for isolated package builds.
+- Add a repository-installable Codex Skill aligned with the current CLI and safety rules.
 
 ## [0.1.1] - 2026-08-09
 
