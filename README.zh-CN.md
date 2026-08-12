@@ -30,6 +30,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 - **浏览器格式不同：** Chromium 使用 JSON 书签树，Safari 使用根节点和元数据不同的 plist。项目通过可移植书签树映射书签栏、菜单、目录、网址和可支持的同步根，而不是跨浏览器复制原始文件。
 - **标识反复变化：** 节点匹配时复用 Chromium ID/GUID 和 Safari UUID，减少无意义的删除重建及云同步噪声。
 - **一次性脚本不安全：** 默认逐目标备份、原子写入、重新加载校验；恢复前还会再次备份当前目标，并在校验失败时自动回滚。
+- **中断或并发写入：** 进程锁阻止两个写操作竞争；有备份的操作若中断，后续写入会停止，直到通过 `--recover` 恢复目标，或由用户明确保留当前状态。
 - **不同浏览器时序不同：** 通过稳定窗口、历史观测、`doctor` 和 `calibrate` 处理浏览器及云同步延迟，而不是假定一个固定等待时间适用于全部浏览器。
 
 ## 核心优势
@@ -38,7 +39,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 | --- | --- |
 | 手动指定方向 | 任意已检测的受支持浏览器都可作为来源，并同步到一个或多个目标。 |
 | 两套同步策略 | 普通或纯本地配置使用快速直写；仅在 Chrome/Edge 确认存在回灌时使用云安全修复。 |
-| 数据安全保护 | 默认备份、`0600` 权限、原子替换、写后校验、带回滚备份的恢复。 |
+| 数据安全保护 | 默认备份、`0600` 权限、单写者锁、中断恢复、原子替换、写后校验、带回滚备份的恢复。 |
 | 本地隐私 | 无遥测、无 API Key、无托管服务，不上传书签；状态文件只保存哈希和时序观测。 |
 | Agent 可调用 | 提供可安装、确定性的 CLI 和稳定 JSON 输出，并保留可选 Codex/Hermes Skill 指令；Skill 是适配层，CLI 才是核心。 |
 | 易于扩展 | 浏览器检测和格式处理器分离注册，新增 Chromium 浏览器可复用现有格式处理器。 |
@@ -68,10 +69,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-无需克隆仓库，也可以直接安装已发布的 `v0.1.1` wheel：
+无需克隆仓库，也可以直接安装已发布的 `v0.2.0` wheel：
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.1.1/bookmark_sync-0.1.1-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.0/bookmark_sync-0.2.0-py3-none-any.whl
 ```
 
 不保留源码目录也可以安装可调用 CLI：
@@ -95,7 +96,16 @@ Agent 和 CI 可以从 stdout 读取 JSON，详细人工日志会写到 stderr�
 bookmark-sync --from chrome --to edge safari --mode preview --json
 bookmark-sync --doctor edge --json
 bookmark-sync --list-backups --json
+bookmark-sync --version
 ```
+
+有备份的写操作若中断，新的写操作会停止，直到处理记录的目标：
+
+```bash
+bookmark-sync --recover --auto-close
+```
+
+只有在检查目标和备份、并明确决定保留当前目标后，才使用 `--discard-recovery`；它只清除恢复记录，不修改书签。
 
 JSON 协议带有版本号，包含操作、退出码、选定书签库、策略、备份路径、doctor 诊断、结果数量和校验摘要，不包含书签标题或 URL。`--list-backups` 即使在没有可用浏览器书签库时也能工作，并按新到旧返回目标、创建时间、备份年龄、大小和路径。
 
@@ -155,14 +165,14 @@ open "dist/Bookmark Sync.app"
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile bookmark_sync.py sync_bookmarks.py sync-bookmarks
+python3 -m py_compile bookmark_sync.py bookmark_sync_version.py sync_bookmarks.py sync-bookmarks
 python3 -m pip wheel --no-deps . --wheel-dir /tmp/bookmark-sync-wheel
 ruff check .
 ```
 
 自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验、命令封装和真实 JSON CLI 子进程协议。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.1.1`。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.2.0`。
 
 提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
 

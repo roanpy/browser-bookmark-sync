@@ -9,10 +9,10 @@ This project separates deterministic format tests from browser-dependent manual 
 | Chromium JSON and Safari plist conversion | Portable tree mapping, folders, URLs, and root handling |
 | Metadata preservation | Matching Chromium IDs/GUIDs and Safari UUIDs |
 | Sync strategies | Direct, automatic selection, cloud-safe consent, and cloud-purge rollback |
-| Recovery | Backups, newest-first backup discovery, restrictive permissions, atomic writes, restore verification, and rollback |
+| Recovery | Backups, newest-first discovery, restrictive permissions, single-writer lock, interrupted-operation recovery, restore verification, and rollback |
 | Stabilization | Delayed drift detection, Edge repair, doctor, and calibrate state |
 | CLI wrapper | Explicit directions, aliases, preview, restore, and safety flags |
-| Installable CLI and JSON contract | `pyproject.toml`, console entry point, exit codes, redacted machine-readable summaries |
+| Installable CLI and JSON contract | Single-source version, wheel installation, console entry point, exit codes, redacted machine-readable summaries |
 | JSON CLI integration | Real subprocess invocation, backup/doctor summaries, pure JSON stdout, and title/URL exclusion from machine-readable output |
 | Build | Python compile, Ruff, AppleScript compile, ad-hoc macOS app build, and embedded-file match |
 | Release workflow | YAML validation, tagged-version guard, source/wheel publishing, protected environment, and optional credential-gated signing/notarization path |

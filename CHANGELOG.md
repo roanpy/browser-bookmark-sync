@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-12
+
 - Refresh release and security wording after publishing `v0.1.1`.
 - Add direct wheel installation guidance, a feature-request template, and Dependabot configuration.
 - Add newest-first backup discovery and structured JSON output for doctor diagnostics.
@@ -10,6 +12,11 @@
 - Make release checksums directly verifiable after downloading assets.
 - Require a patched Setuptools release for isolated package builds.
 - Add a repository-installable Codex Skill aligned with the current CLI and safety rules.
+- Add a single-source `--version` contract for source, wheel, app, and release tags.
+- Prevent concurrent write operations with a restrictive process lock.
+- Record backed-up write operations and block new writes until interrupted targets are recovered or explicitly accepted.
+- Create target backups atomically and always close browsers opened for delayed reinjection checks.
+- Add wheel-install CI coverage and include the version module in the macOS app.
 
 ## [0.1.1] - 2026-08-09
 

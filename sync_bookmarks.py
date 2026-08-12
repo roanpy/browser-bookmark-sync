@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bookmark_sync_version import __version__
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ENGINE = SCRIPT_DIR / "bookmark_sync.py"
@@ -52,7 +54,7 @@ def resolve_source(args: argparse.Namespace) -> str:
         raise SystemExit("Use either positional SOURCE or --from, not both.")
     source = args.from_ or args.source
     if not source:
-        raise SystemExit("source is required unless --list, --list-backups, --doctor, or --calibrate is used")
+        raise SystemExit("source is required unless an inspect, recovery, doctor, or calibrate command is used")
     return normalize_store_alias(source)
 
 
@@ -124,6 +126,14 @@ def build_passthrough_command(args: argparse.Namespace) -> list[str]:
     if args.list_backups:
         command.append("--list-backups")
         return command
+    if args.recover:
+        command.append("--recover")
+        if args.auto_close:
+            command.append("--auto-close")
+        return command
+    if args.discard_recovery:
+        command.append("--discard-recovery")
+        return command
     if args.doctor is not None:
         command.extend(["--doctor", args.doctor])
         return command
@@ -138,6 +148,10 @@ def operation_name(args: argparse.Namespace) -> str:
         return "list"
     if args.list_backups:
         return "list_backups"
+    if args.recover:
+        return "recover"
+    if args.discard_recovery:
+        return "discard_recovery"
     if args.doctor is not None:
         return "doctor"
     if args.calibrate is not None:
@@ -149,7 +163,7 @@ def operation_name(args: argparse.Namespace) -> str:
 
 def json_metadata(args: argparse.Namespace) -> dict[str, object]:
     operation = operation_name(args)
-    metadata: dict[str, object] = {"operation": operation}
+    metadata: dict[str, object] = {"operation": operation, "version": __version__}
     if operation == "sync":
         source_id = resolve_source(args)
         metadata["source"] = source_id
@@ -282,6 +296,10 @@ def _parse_json_summary(output: str, metadata: dict[str, object]) -> dict[str, o
             current_result = {"target": sync_match.group(1)}
             results.append(current_result)
         else:
+            recovery_match = re.match(r"^Recovered (.+?) from .+$", stripped)
+            if recovery_match:
+                current_result = {"target": recovery_match.group(1)}
+                results.append(current_result)
             cloud_result_match = re.match(r"^Cloud-safe resync complete for (.+)$", stripped)
             if cloud_result_match:
                 current_result = {"target": cloud_result_match.group(1)}
@@ -360,6 +378,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("targets", nargs="*", help="Optional target browser aliases/ids; defaults to all other supported browsers")
     parser.add_argument("--list", action="store_true", help="List detected bookmark stores")
     parser.add_argument("--list-backups", action="store_true", help="List available backups, newest first")
+    recovery = parser.add_mutually_exclusive_group()
+    recovery.add_argument("--recover", action="store_true", help="Restore the target from an unfinished operation")
+    recovery.add_argument("--discard-recovery", action="store_true", help="Keep the current target and clear an unfinished operation")
     parser.add_argument("--doctor", nargs="?", const="all", help="Run the health report for one browser or all")
     parser.add_argument("--calibrate", nargs="?", const="all", help="Calibrate stabilization profiles for one browser or all")
     parser.add_argument("--restore-backup", help="Restore a backup file")
@@ -391,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit a stable machine-readable result on stdout; detailed logs go to stderr",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.set_defaults(auto_close=False)
     return parser
 
@@ -398,14 +420,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    metadata: dict[str, object] = {"operation": operation_name(args)} if args.json else {}
+    metadata: dict[str, object] = (
+        {"operation": operation_name(args), "version": __version__} if args.json else {}
+    )
 
     try:
         if args.json:
             metadata = json_metadata(args)
         if args.restore_backup or args.restore_target:
             command = build_restore_command(args)
-        elif args.list or args.list_backups or args.doctor is not None or args.calibrate is not None:
+        elif args.list or args.list_backups or args.recover or args.discard_recovery or args.doctor is not None or args.calibrate is not None:
             command = build_passthrough_command(args)
         else:
             command = build_sync_command(args)

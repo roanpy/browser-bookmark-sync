@@ -42,6 +42,20 @@ def make_snapshot(store: bookmark_sync.BrowserStore, portable: dict[str, list[di
 
 
 class BookmarkSyncTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runtime_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.runtime_dir.cleanup)
+        runtime = Path(self.runtime_dir.name)
+        patcher = mock.patch.multiple(
+            bookmark_sync,
+            DATA_DIR=runtime,
+            STATE_FILE=runtime / "state.json",
+            LOCK_FILE=runtime / "operation.lock",
+            DOWNLOAD_BACKUP_DIR=runtime / "backups",
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_display_path_redacts_home_directory(self) -> None:
         self.assertEqual(bookmark_sync.display_path(bookmark_sync.HOME / "Downloads" / "backup.bak"), "~/Downloads/backup.bak")
 
@@ -99,6 +113,35 @@ class BookmarkSyncTests(unittest.TestCase):
 
             self.assertEqual(target.read_bytes(), b"original")
             self.assertEqual(list(Path(tmpdir).iterdir()), [target])
+
+    def test_backup_target_does_not_leave_a_partial_backup(self) -> None:
+        runtime = Path(self.runtime_dir.name)
+        source = runtime / "Bookmarks"
+        source.write_bytes(b"original")
+        store = make_store("edge:Default", "edge")
+        store.path = source
+
+        with (
+            mock.patch.object(bookmark_sync.os, "replace", side_effect=OSError("replace failed")),
+            self.assertRaisesRegex(OSError, "replace failed"),
+        ):
+            bookmark_sync.backup_target(store)
+
+        self.assertEqual(list(bookmark_sync.DOWNLOAD_BACKUP_DIR.iterdir()), [])
+
+    def test_operation_lock_rejects_a_second_writer(self) -> None:
+        with bookmark_sync.operation_lock():
+            with self.assertRaisesRegex(SystemExit, "already running"):
+                with bookmark_sync.operation_lock():
+                    self.fail("second writer acquired the lock")
+
+        self.assertEqual(bookmark_sync.LOCK_FILE.stat().st_mode & 0o777, 0o600)
+        with bookmark_sync.operation_lock():
+            pass
+
+    def test_recovery_actions_are_mutually_exclusive(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            bookmark_sync.build_parser().parse_args(["--recover", "--discard-recovery"])
 
     def test_restore_store_backup_verifies_and_keeps_a_rollback(self) -> None:
         def chromium_raw(name: str, url: str) -> dict:
@@ -743,6 +786,32 @@ class BookmarkSyncTests(unittest.TestCase):
         close_mock.assert_called_once_with({"edge"}, auto_close=True)
         sync_mock.assert_called_once_with(source, target_store, "strict", backup_enabled=True)
 
+    def test_post_open_check_closes_browser_without_drift(self) -> None:
+        source_store = make_store("chrome:Default", "chrome")
+        target_store = make_store("edge:Default", "edge")
+        source = make_snapshot(source_store, {"bar": [], "menu": [], "synced": []})
+        aligned = bookmark_sync.SyncVerification(
+            reloaded=make_snapshot(target_store, {"bar": [], "menu": [], "synced": []}),
+            same_count=True,
+            same_portable=True,
+            source_signature="same",
+            target_signature="same",
+        )
+
+        with (
+            mock.patch.dict(bookmark_sync.POST_OPEN_CHECK_PROFILES, {"edge": {"delay_seconds": 0.0, "poll_interval": 0.0, "max_checks": 1}}, clear=False),
+            mock.patch.object(bookmark_sync, "open_browser"),
+            mock.patch.object(bookmark_sync.time, "sleep"),
+            mock.patch.object(bookmark_sync, "verify_snapshot_counts", return_value=aligned),
+            mock.patch.object(bookmark_sync, "ensure_browsers_closed") as close_mock,
+        ):
+            drifted, backup_path, verification = bookmark_sync.run_post_open_check(source, target_store, "strict")
+
+        self.assertFalse(drifted)
+        self.assertIsNone(backup_path)
+        self.assertTrue(verification.same_portable)
+        close_mock.assert_called_once_with({"edge"}, auto_close=True)
+
     def test_sync_store_skips_backup_when_disabled(self) -> None:
         source_store = make_store("chrome:Default", "chrome")
         target_store = make_store("edge:Default", "edge")
@@ -769,6 +838,62 @@ class BookmarkSyncTests(unittest.TestCase):
         backup_target.assert_not_called()
         self.assertIsNone(backup_path)
         self.assertTrue(result.same_portable)
+
+    def test_sync_failure_keeps_recovery_record(self) -> None:
+        source_store = make_store("chrome:Default", "chrome")
+        target_store = make_store("edge:Default", "edge")
+        source = make_snapshot(source_store, {"bar": [], "menu": [], "synced": []})
+        backup_path = Path(self.runtime_dir.name) / "before-sync.bak"
+        backup_path.write_text("backup")
+
+        with (
+            mock.patch.object(bookmark_sync, "backup_target", return_value=backup_path),
+            mock.patch.object(bookmark_sync, "write_target_store", side_effect=OSError("write failed")),
+            self.assertRaisesRegex(OSError, "write failed"),
+        ):
+            bookmark_sync.sync_store(source, target_store, "strict")
+
+        pending = bookmark_sync.get_pending_operation()
+        self.assertEqual(pending["target"], "edge:Default")
+        self.assertEqual(pending["backup"], str(backup_path))
+        with self.assertRaisesRegex(SystemExit, "Run --recover"):
+            bookmark_sync.require_no_pending_operation()
+
+    def test_recover_pending_operation_restores_backup(self) -> None:
+        def chromium_raw(name: str) -> dict:
+            return {
+                "roots": {
+                    "bookmark_bar": {
+                        "children": [{"type": "url", "name": name, "url": "https://example.invalid"}],
+                        "type": "folder",
+                    },
+                    "other": {"children": [], "type": "folder"},
+                    "synced": {"children": [], "type": "folder"},
+                },
+                "version": 1,
+            }
+
+        runtime = Path(self.runtime_dir.name)
+        target_path = runtime / "Bookmarks"
+        backup_path = runtime / "before-sync.bak"
+        target_path.write_text(json.dumps(chromium_raw("Interrupted")))
+        backup_path.write_text(json.dumps(chromium_raw("Original")))
+        target = make_store("edge:Default", "edge")
+        target.path = target_path
+        state = bookmark_sync.load_state()
+        state[bookmark_sync.PENDING_OPERATION_STATE_KEY] = {
+            "operation": "sync",
+            "target": target.id,
+            "backup": str(backup_path),
+        }
+        bookmark_sync.save_state(state)
+
+        with mock.patch.object(bookmark_sync, "ensure_browsers_closed"):
+            result = bookmark_sync.recover_pending_operation([target], auto_close=True)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(bookmark_sync.load_snapshot(target).portable["bar"][0]["name"], "Original")
+        self.assertIsNone(bookmark_sync.get_pending_operation())
 
     def test_strict_sync_fails_when_content_differs_with_same_count(self) -> None:
         source_store = make_store("chrome:Default", "chrome")

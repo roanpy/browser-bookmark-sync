@@ -26,7 +26,7 @@ jobs:
       - name: Validate tagged version and tests
         run: |
           set -eu
-          expected_tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          expected_tag="v$(python3 -c 'from bookmark_sync_version import __version__; print(__version__)')"
           test "$GITHUB_REF_NAME" = "$expected_tag" || {
             echo "::error::Tag $GITHUB_REF_NAME does not match package version $expected_tag"
             exit 1

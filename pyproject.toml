@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bookmark-sync"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Safe, local-first bookmark mirroring and repair across macOS browsers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,4 +30,7 @@ Repository = "https://github.com/roanpy/browser-bookmark-sync"
 Issues = "https://github.com/roanpy/browser-bookmark-sync/issues"
 
 [tool.setuptools]
-py-modules = ["bookmark_sync", "sync_bookmarks"]
+py-modules = ["bookmark_sync", "bookmark_sync_version", "sync_bookmarks"]
+
+[tool.setuptools.dynamic]
+version = {attr = "bookmark_sync_version.__version__"}
