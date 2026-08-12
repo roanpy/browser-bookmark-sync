@@ -398,9 +398,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    metadata: dict[str, object] = {"operation": operation_name(args)} if args.json else {}
 
     try:
-        metadata = json_metadata(args) if args.json else {}
+        if args.json:
+            metadata = json_metadata(args)
         if args.restore_backup or args.restore_target:
             command = build_restore_command(args)
         elif args.list or args.list_backups or args.doctor is not None or args.calibrate is not None:
@@ -415,7 +417,7 @@ def main() -> int:
             **metadata,
             "ok": False,
             "exit_code": 2,
-            "error": str(exc.code),
+            "error": str(exc),
         }
         print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
         return 2

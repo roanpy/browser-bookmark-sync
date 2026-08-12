@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import plistlib
 import sys
 import tempfile
 import unittest
@@ -68,6 +69,23 @@ class BookmarkSyncTests(unittest.TestCase):
                 second = bookmark_sync.backup_target(store)
 
         self.assertNotEqual(first.name, second.name)
+
+    def test_snapshot_loaders_reject_missing_required_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chromium_path = root / "Bookmarks"
+            safari_path = root / "Bookmarks.plist"
+            chromium_path.write_text("{}")
+            safari_path.write_bytes(plistlib.dumps({}))
+            chromium = make_store("chrome:Default", "chrome")
+            safari = make_store("safari", "safari")
+            chromium.path = chromium_path
+            safari.path = safari_path
+
+            with self.assertRaisesRegex(SystemExit, "missing required roots"):
+                bookmark_sync.load_snapshot(chromium)
+            with self.assertRaisesRegex(SystemExit, "missing BookmarksBar or BookmarksMenu roots"):
+                bookmark_sync.load_snapshot(safari)
 
     def test_atomic_write_removes_temporary_file_after_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -5,6 +5,10 @@
 - Refresh release and security wording after publishing `v0.1.1`.
 - Add direct wheel installation guidance, a feature-request template, and Dependabot configuration.
 - Add newest-first backup discovery and structured JSON output for doctor diagnostics.
+- Reject bookmark files that are missing required Chromium or Safari roots.
+- Keep JSON error output machine-readable during argument validation.
+- Make release checksums directly verifiable after downloading assets.
+- Require a patched Setuptools release for isolated package builds.
 
 ## [0.1.1] - 2026-08-09
 
