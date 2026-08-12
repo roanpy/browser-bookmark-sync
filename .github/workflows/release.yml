@@ -104,6 +104,8 @@ jobs:
           set -eu
           ./build-macos-app "$APP_PATH"
           codesign --force --deep --options runtime --timestamp --sign "$APPLE_DEVELOPER_ID" "$APP_PATH"
+          BOOKMARK_SYNC_HOME="$RUNNER_TEMP/bookmark-sync-home" "$APP_PATH/Contents/Resources/bin/sync-bookmarks" --list-backups --json
+          test ! -d "$APP_PATH/Contents/Resources/bin/__pycache__"
           codesign --verify --deep --strict "$APP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$NOTARY_ZIP"
 

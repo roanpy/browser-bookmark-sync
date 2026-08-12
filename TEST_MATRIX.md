@@ -14,7 +14,7 @@ This project separates deterministic format tests from browser-dependent manual 
 | CLI wrapper | Explicit directions, aliases, preview, restore, and safety flags |
 | Installable CLI and JSON contract | Single-source version, wheel installation, console entry point, exit codes, redacted machine-readable summaries |
 | JSON CLI integration | Real subprocess invocation, backup/doctor summaries, pure JSON stdout, and title/URL exclusion from machine-readable output |
-| Build | Python compile, Ruff, AppleScript compile, ad-hoc macOS app build, and embedded-file match |
+| Build | Python compile, Ruff, AppleScript compile, ad-hoc macOS app build, embedded-file match, and post-launch signature verification |
 | Release workflow | YAML validation, tagged-version guard, source/wheel publishing, protected environment, and optional credential-gated signing/notarization path |
 
 ## Manual validation

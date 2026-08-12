@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-12
+
+- Keep locally built and signed macOS apps sealed after the bundled Python CLI launches child processes.
+- Remove stale bytecode from rebuilt app bundles and verify the post-launch code signature in CI and signed releases.
+
 ## [0.2.0] - 2026-08-12
 
 - Refresh release and security wording after publishing `v0.1.1`.

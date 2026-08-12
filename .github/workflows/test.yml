@@ -23,4 +23,10 @@ jobs:
       - run: python3 -m pip install --disable-pip-version-check --no-deps /tmp/bookmark-sync-wheel/*.whl && bookmark-sync --version
       - run: ruff check .
       - run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "release.yml YAML parsed"'
-      - run: ./build-macos-app "$RUNNER_TEMP/Bookmark Sync.app"
+      - name: Verify app stays sealed after running the bundled CLI
+        run: |
+          app="$RUNNER_TEMP/Bookmark Sync.app"
+          ./build-macos-app "$app"
+          BOOKMARK_SYNC_HOME="$RUNNER_TEMP/bookmark-sync-home" "$app/Contents/Resources/bin/sync-bookmarks" --list-backups --json
+          test ! -d "$app/Contents/Resources/bin/__pycache__"
+          codesign --verify --deep --strict "$app"
