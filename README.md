@@ -34,7 +34,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 - **Edge cloud reinjection:** a local bookmark-file replacement can appear correct, then Edge Sync restores stale cloud entries after the browser opens. The `auto` strategy detects this drift, records it per target, and switches affected Chrome/Edge profiles to a browser-API purge, cloud-settle, and restore workflow.
 - **Different browser formats:** Chromium browsers use JSON bookmark trees while Safari uses a property list with different roots and metadata. A portable tree maps bookmark bar, menu, folders, URLs, and supported synced roots without copying one browser's raw file into another.
 - **Identity churn:** unchanged Chromium IDs/GUIDs and Safari UUIDs are reused when nodes match, reducing needless delete/recreate behavior and cloud-sync noise.
-- **Unsafe one-shot scripts:** every target is backed up by default, writes are atomic, results are reloaded and compared, and restore creates its own rollback backup.
+- **Unsafe one-shot scripts:** every target is backed up by default, writes are atomically replaced and directory-synced, results are reloaded and compared, and restore creates its own rollback backup.
 - **Interrupted or concurrent writes:** a process lock prevents two writers from racing, and unfinished backed-up operations block new writes until `--recover` restores the target or the user explicitly keeps the current state.
 - **Browser timing differences:** stabilization observations, `doctor`, and `calibrate` provide browser-specific verification instead of assuming one fixed delay works everywhere.
 
@@ -44,7 +44,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 | --- | --- |
 | Explicit direction | Choose any detected supported browser as source and one or more targets. |
 | Two sync strategies | Fast direct writes for normal/local profiles; cloud-safe remediation only for confirmed Chrome/Edge reinjection cases. |
-| Data-loss guards | Target backup, `0600` permissions, single-writer lock, interruption recovery, atomic replacement, post-write verification, and verified restore with rollback. |
+| Data-loss guards | Target backup, restrictive permissions, single-writer lock, interruption recovery, linked-file rejection, durable atomic replacement, post-write verification, and verified restore with rollback. |
 | Local-first privacy | No telemetry, API key, hosted service, or bookmark upload. Runtime state stores hashes and timing observations, not URLs. |
 | Agent-friendly interface | Installable deterministic CLI with stable JSON output plus optional Codex/Hermes Skill instructions. The Skill is an adapter; the CLI remains the product core. |
 | Extensible registry | Browser detection and format handlers are registered separately, so another Chromium browser can reuse the existing handler. |
@@ -97,6 +97,12 @@ Preview Chrome to Edge and Safari without writing:
 
 ```bash
 ./sync-bookmarks --from chrome --to edge safari --mode preview
+```
+
+Use a full store ID when a browser has multiple profiles:
+
+```bash
+bookmark-sync --from "chrome:Profile 1" --to "edge:Work" --mode preview
 ```
 
 Agent and CI integrations can consume JSON on stdout; detailed human diagnostics stay on stderr:
@@ -169,10 +175,14 @@ The tag-driven release workflow is documented in [RELEASING.md](RELEASING.md). I
 - If cloud purge fails, the tool closes the target browser and makes a best-effort local rollback from the pre-purge backup.
 - Source bookmarks are reloaded after affected browsers close, avoiding a stale pre-shutdown snapshot.
 - Atomic-write temporary files are removed even when replacement fails.
+- Bookmark stores, backups, and runtime state must be single-link regular files; symbolic links and multi-linked files are rejected before reads or replacement.
+- Invalid runtime state blocks writes instead of silently dropping a possible interruption-recovery record.
 - Backups contain complete bookmark data. Do not publish them or attach them to issues.
 - Runtime state contains store IDs, SHA-256 signatures, timing observations, and strategy history, but no bookmark titles or URLs.
 
 The temporary Chrome/Edge extension uses the documented Chromium `bookmarks` API and exists only for the cloud-safe run. See the official [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks) and [Microsoft Edge extension API support](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/api-support).
+
+Cloud-safe mode is a targeted bookmark repair, not Microsoft's account-level reset. If Edge reports a general sync failure, first export favorites and use Edge's official [Re-sync or Reset sync procedure](https://learn.microsoft.com/en-us/deployedge/edge-learnmore-reset-data-in-cloud). Safari bookmarks remain governed by iCloud; Apple documents automatic archives and recovery at [iCloud bookmark recovery](https://support.apple.com/en-lamr/111761).
 
 ## Validation
 

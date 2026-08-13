@@ -27,19 +27,25 @@ BACKUP_PREFIXES = (
     "Backup:",
     "Sync backup:",
     "API purge phase backup:",
-    "Empty phase backup:",
     "Repair backup:",
     "Rollback backup:",
 )
 
 
 def normalize_store_alias(value: str) -> str:
-    normalized = value.strip().lower()
+    raw = value.strip()
+    normalized = raw.lower()
     if normalized in STORE_ALIASES:
         return STORE_ALIASES[normalized]
     for store_id in STORE_ALIASES.values():
         if store_id.lower() == normalized:
             return store_id
+    if ":" in raw:
+        browser, profile = raw.split(":", 1)
+        browser = browser.strip().lower()
+        profile = profile.strip()
+        if browser in STORE_ALIASES and browser != "safari" and profile:
+            return f"{browser}:{profile}"
     raise SystemExit(f"Unsupported browser alias or id: {value}")
 
 
@@ -47,6 +53,15 @@ def normalize_to_values(values: list[str] | None) -> list[str]:
     if not values:
         return []
     return [item.strip() for item in ",".join(values).split(",") if item.strip()]
+
+
+def display_path(path: str) -> str:
+    expanded = Path(path).expanduser()
+    home = Path.home()
+    try:
+        return f"~/{expanded.relative_to(home)}"
+    except ValueError:
+        return str(expanded)
 
 
 def resolve_source(args: argparse.Namespace) -> str:
@@ -64,7 +79,7 @@ def resolve_targets(args: argparse.Namespace, source_id: str) -> list[str]:
     target_values = args.targets if args.targets else normalize_to_values(args.to)
     if not target_values:
         return default_target_ids(source_id)
-    target_ids = [normalize_store_alias(value) for value in target_values]
+    target_ids = list(dict.fromkeys(normalize_store_alias(value) for value in target_values))
     target_ids = [target_id for target_id in target_ids if target_id != source_id]
     if not target_ids:
         raise SystemExit("No valid targets selected")
@@ -72,7 +87,8 @@ def resolve_targets(args: argparse.Namespace, source_id: str) -> list[str]:
 
 
 def default_target_ids(source_id: str) -> list[str]:
-    return [store_id for store_id in DEFAULT_STORE_IDS if store_id != source_id]
+    source_browser = source_id.partition(":")[0]
+    return [store_id for store_id in DEFAULT_STORE_IDS if store_id.partition(":")[0] != source_browser]
 
 
 def build_sync_command(args: argparse.Namespace) -> list[str]:
@@ -174,7 +190,7 @@ def json_metadata(args: argparse.Namespace) -> dict[str, object]:
         if args.restore_target:
             metadata["target"] = normalize_store_alias(args.restore_target)
         if args.restore_backup:
-            metadata["backup"] = str(Path(args.restore_backup).expanduser())
+            metadata["backup"] = display_path(args.restore_backup)
     elif operation in {"doctor", "calibrate"}:
         metadata["browser"] = args.doctor if operation == "doctor" else args.calibrate
     return metadata

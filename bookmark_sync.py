@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import stat
 import subprocess
 import tempfile
 import time
@@ -37,7 +38,7 @@ POST_OPEN_CHECK_PROFILES = {
     "chrome": {"delay_seconds": 20.0, "poll_interval": 5.0, "max_checks": 8},
     "edge": {"delay_seconds": 30.0, "poll_interval": 5.0, "max_checks": 12},
 }
-EDGE_EMPTY_SYNC_WAIT_SECONDS = 45.0
+CLOUD_SETTLE_WAIT_SECONDS = 45.0
 EDGE_API_PURGE_WINDOW_SECONDS = 90.0
 EDGE_API_POLL_INTERVAL_SECONDS = 5.0
 
@@ -220,7 +221,7 @@ def chromium_node_to_portable(node: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def load_chromium_snapshot(store: BrowserStore) -> BookmarkSnapshot:
-    raw = json.loads(store.path.read_text())
+    raw = json.loads(read_regular_text(store.path, f"bookmark store {store.label}"))
     if not isinstance(raw, dict):
         raise SystemExit(f"Invalid Chromium bookmark store: {store.label}")
     roots = raw.get("roots")
@@ -291,8 +292,7 @@ def find_safari_root(raw: dict[str, Any], title: str) -> dict[str, Any] | None:
 
 
 def load_safari_snapshot(store: BrowserStore) -> BookmarkSnapshot:
-    with store.path.open("rb") as handle:
-        raw = plistlib.load(handle)
+    raw = plistlib.loads(read_regular_bytes(store.path, f"bookmark store {store.label}"))
     if not isinstance(raw, dict):
         raise SystemExit(f"Invalid Safari bookmark store: {store.label}")
     bookmarks_bar = find_safari_root(raw, "BookmarksBar")
@@ -361,12 +361,31 @@ def portable_signature(portable: dict[str, list[dict[str, Any]]]) -> str:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATE_FILE.exists():
+    try:
+        STATE_FILE.lstat()
+    except FileNotFoundError:
         return {}
     try:
-        raw_state = json.loads(STATE_FILE.read_text())
-    except json.JSONDecodeError:
-        return {}
+        state_text = read_regular_text(STATE_FILE, "runtime state")
+    except SystemExit as exc:
+        raise SystemExit(
+            f"{exc} Writes are blocked so an unfinished recovery record is not lost. "
+            "Restore a valid state file or inspect backups before moving it aside."
+        ) from exc
+    try:
+        raw_state = json.loads(state_text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Runtime state is invalid JSON: {display_path(STATE_FILE)}. "
+            "Writes are blocked so an unfinished recovery record is not lost. "
+            "Restore a valid state file or inspect backups before moving it aside."
+        ) from exc
+    if not isinstance(raw_state, dict):
+        raise SystemExit(
+            f"Runtime state must be a JSON object: {display_path(STATE_FILE)}. "
+            "Writes are blocked so an unfinished recovery record is not lost. "
+            "Restore a valid state file or inspect backups before moving it aside."
+        )
 
     baselines = {
         key: value
@@ -427,10 +446,18 @@ def save_state(state: dict[str, Any]) -> None:
 
 @contextmanager
 def operation_lock() -> Iterator[None]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    handle = LOCK_FILE.open("a+", encoding="utf-8")
+    ensure_private_directory(DATA_DIR)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(LOCK_FILE, flags, 0o600)
+    except OSError as exc:
+        raise SystemExit(f"Could not open operation lock safely: {display_path(LOCK_FILE)} ({exc.strerror})") from exc
+    handle = os.fdopen(descriptor, "r+", encoding="utf-8")
     locked = False
     try:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SystemExit(f"Operation lock is not a single-link regular file: {display_path(LOCK_FILE)}")
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             locked = True
@@ -443,7 +470,7 @@ def operation_lock() -> Iterator[None]:
         handle.truncate()
         handle.write(str(os.getpid()))
         handle.flush()
-        LOCK_FILE.chmod(0o600)
+        os.fchmod(handle.fileno(), 0o600)
         yield
     finally:
         if locked:
@@ -490,8 +517,59 @@ def require_no_pending_operation() -> None:
     )
 
 
+def ensure_private_directory(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(parents=True)
+        info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or path.is_symlink():
+        raise SystemExit(f"Private data directory is not a regular directory: {display_path(path)}")
+    path.chmod(0o700)
+
+
+def read_regular_bytes(path: Path, description: str) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise SystemExit(f"Could not open {description}: {display_path(path)} ({exc.strerror})") from exc
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SystemExit(
+                f"Refusing {description} that is not a single-link regular file: {display_path(path)}"
+            )
+        return handle.read()
+
+
+def read_regular_text(path: Path, description: str) -> str:
+    try:
+        return read_regular_bytes(path, description).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"{description.capitalize()} is not valid UTF-8: {display_path(path)}") from exc
+
+
+def validate_replace_target(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SystemExit(f"Refusing to replace a linked or non-regular file: {display_path(path)}")
+
+
+def sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    validate_replace_target(path)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
@@ -500,6 +578,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_path, path)
+        sync_directory(path.parent)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -509,14 +588,12 @@ def atomic_write_text(path: Path, content: str) -> None:
     atomic_write_bytes(path, content.encode("utf-8"))
 
 
-def read_json_dict(path: Path) -> dict[str, Any]:
+def read_json_dict(path: Path) -> dict[str, Any] | None:
     try:
-        raw = json.loads(path.read_text())
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
-        return {}
-    return raw if isinstance(raw, dict) else {}
+        raw = json.loads(read_regular_text(path, "browser preference file"))
+    except (SystemExit, json.JSONDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def get_primary_store_id() -> str | None:
@@ -652,20 +729,30 @@ def ensure_browsers_closed(required_browsers: set[str], auto_close: bool) -> Non
 
 
 def backup_target(target: BrowserStore) -> Path:
-    DOWNLOAD_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(DOWNLOAD_BACKUP_DIR)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     suffix = target.path.suffix or ".bak"
     backup_path = DOWNLOAD_BACKUP_DIR / f"{timestamp}-{target.id.replace(':', '_')}{suffix}"
-    atomic_write_bytes(backup_path, target.path.read_bytes())
+    atomic_write_bytes(backup_path, read_regular_bytes(target.path, f"bookmark store {target.label}"))
     backup_path.chmod(0o600)
     return backup_path
 
 
 def print_backup_list() -> int:
     backups: list[tuple[datetime, Path, str]] = []
-    if DOWNLOAD_BACKUP_DIR.exists():
+    try:
+        info = DOWNLOAD_BACKUP_DIR.lstat()
+    except FileNotFoundError:
+        info = None
+    if info is not None:
+        if not stat.S_ISDIR(info.st_mode) or DOWNLOAD_BACKUP_DIR.is_symlink():
+            raise SystemExit(f"Backup directory is not a regular directory: {display_path(DOWNLOAD_BACKUP_DIR)}")
         for path in DOWNLOAD_BACKUP_DIR.iterdir():
-            if not path.is_file() or path.suffix not in {".bak", ".plist"}:
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.suffix not in {".bak", ".plist"}:
                 continue
             if len(path.name) < 24 or path.name[22] != "-":
                 continue
@@ -709,18 +796,47 @@ def chromium_sync_state(target: BrowserStore) -> tuple[bool, str]:
         return False, "not a supported Chromium sync target"
 
     prefs = read_json_dict(target.path.parent / "Preferences")
+    if prefs is None:
+        return True, "sync state unknown because Preferences is missing or unreadable; treating it as potentially enabled"
     sync = prefs.get("sync", {})
     if not isinstance(sync, dict):
         sync = {}
 
     if target.browser == "chrome":
-        consented_to_sync = bool(read_json_dict(target.path.parent / "Preferences").get("google", {}).get("services", {}).get("consented_to_sync"))
+        google = prefs.get("google", {})
+        if not isinstance(google, dict):
+            google = {}
+        services = google.get("services", {})
+        if not isinstance(services, dict):
+            services = {}
+        consented_value = services.get("consented_to_sync")
         data_types = sync.get("data_type_status_for_sync_to_signin", {})
         if not isinstance(data_types, dict):
             data_types = {}
-        bookmarks_enabled = bool(data_types.get("bookmarks"))
-        setup_completed = bool(sync.get("has_setup_completed"))
+        bookmarks_value = data_types.get("bookmarks")
+        setup_value = sync.get("has_setup_completed")
         feature_status = sync.get("feature_status_for_sync_to_signin")
+        missing = [
+            name
+            for name, present in (
+                ("bookmarks", "bookmarks" in data_types),
+                ("setup", "has_setup_completed" in sync),
+                ("consent", "consented_to_sync" in services),
+                ("feature_status", "feature_status_for_sync_to_signin" in sync),
+            )
+            if not present
+        ]
+        explicitly_disabled = (
+            consented_value is False
+            or bookmarks_value is False
+            or setup_value is False
+            or ("feature_status_for_sync_to_signin" in sync and feature_status not in {2, 3})
+        )
+        if missing and not explicitly_disabled:
+            return True, f"sync state unknown because fields are missing ({', '.join(missing)}); treating it as potentially enabled"
+        consented_to_sync = bool(consented_value)
+        bookmarks_enabled = bool(bookmarks_value)
+        setup_completed = bool(setup_value)
         enabled = bookmarks_enabled and setup_completed and consented_to_sync and feature_status in {2, 3}
         reason = (
             f"bookmarks={'on' if bookmarks_enabled else 'off'}, "
@@ -730,7 +846,7 @@ def chromium_sync_state(target: BrowserStore) -> tuple[bool, str]:
         )
         return enabled, reason
 
-    local_state = read_json_dict(target.path.parent.parent / "Local State")
+    local_state = read_json_dict(target.path.parent.parent / "Local State") or {}
     sync = prefs.get("sync", {})
     if not isinstance(sync, dict):
         sync = {}
@@ -738,9 +854,23 @@ def chromium_sync_state(target: BrowserStore) -> tuple[bool, str]:
     if not isinstance(profile_info, dict):
         profile_info = {}
 
-    bookmarks_enabled = bool(sync.get("bookmarks"))
-    setup_completed = bool(sync.get("has_setup_completed"))
+    bookmarks_value = sync.get("bookmarks")
+    setup_value = sync.get("has_setup_completed")
     edge_sync_enabled = profile_info.get("edge_sync_enabled")
+    missing = [
+        name
+        for name, present in (
+            ("bookmarks", "bookmarks" in sync),
+            ("setup", "has_setup_completed" in sync),
+            ("edge_sync_enabled", "edge_sync_enabled" in profile_info),
+        )
+        if not present
+    ]
+    explicitly_disabled = bookmarks_value is False or setup_value is False or edge_sync_enabled is False
+    if missing and not explicitly_disabled:
+        return True, f"sync state unknown because fields are missing ({', '.join(missing)}); treating it as potentially enabled"
+    bookmarks_enabled = bool(bookmarks_value)
+    setup_completed = bool(setup_value)
     enabled = bookmarks_enabled and setup_completed and edge_sync_enabled is not False
     reason = (
         f"bookmarks={'on' if bookmarks_enabled else 'off'}, "
@@ -1043,14 +1173,13 @@ def apply_portable_to_safari(source: BookmarkSnapshot, target_raw: dict[str, Any
 
 
 def write_chromium_snapshot(source: BookmarkSnapshot, target: BrowserStore, mode: str) -> None:
-    target_raw = json.loads(target.path.read_text())
+    target_raw = json.loads(read_regular_text(target.path, f"bookmark store {target.label}"))
     result = apply_portable_to_chromium(source, target_raw, mode)
     atomic_write_text(target.path, json.dumps(result, indent=3, ensure_ascii=False))
 
 
 def write_safari_snapshot(source: BookmarkSnapshot, target: BrowserStore, mode: str) -> None:
-    with target.path.open("rb") as handle:
-        target_raw = plistlib.load(handle)
+    target_raw = plistlib.loads(read_regular_bytes(target.path, f"bookmark store {target.label}"))
     result = apply_portable_to_safari(source, target_raw, mode)
     atomic_write_bytes(target.path, plistlib.dumps(result, sort_keys=False))
 
@@ -1180,18 +1309,6 @@ def explain_edge_cloud_reinjection(source: BookmarkSnapshot, verification: SyncV
 
 def write_target_store(source: BookmarkSnapshot, target: BrowserStore, mode: str) -> None:
     get_format_handler(target.format).write_snapshot(source, target, mode)
-
-
-def clear_chromium_bookmark_file(target: BrowserStore) -> None:
-    raw = json.loads(target.path.read_text())
-    roots = raw.setdefault("roots", {})
-    timestamp = chromium_timestamp_now()
-    for key in ("bookmark_bar", "other", "synced"):
-        root = roots.setdefault(key, {"children": [], "name": key, "type": "folder"})
-        root["children"] = []
-        root["date_modified"] = timestamp
-    raw["checksum"] = ""
-    atomic_write_text(target.path, json.dumps(raw, indent=3, ensure_ascii=False))
 
 
 def render_chromium_bookmark_purge_worker(active_seconds: float) -> str:
@@ -1404,23 +1521,26 @@ def sync_store(source: BookmarkSnapshot, target: BrowserStore, mode: str, backup
 
 
 def restore_store_backup(backup_path: Path, target: BrowserStore) -> tuple[Path, BookmarkSnapshot]:
-    if not backup_path.is_file():
-        raise SystemExit(f"Backup file not found: {display_path(backup_path)}")
-    backup_store = BrowserStore(
-        id=target.id,
-        browser=target.browser,
-        profile=target.profile,
-        format=target.format,
-        path=backup_path,
-        label=f"backup:{backup_path.name}",
-    )
-    expected = load_snapshot(backup_store)
+    backup_bytes = read_regular_bytes(backup_path, "backup file")
+    with tempfile.NamedTemporaryFile(prefix="bookmark-restore-validation-", suffix=backup_path.suffix) as handle:
+        handle.write(backup_bytes)
+        handle.flush()
+        os.fsync(handle.fileno())
+        backup_store = BrowserStore(
+            id=target.id,
+            browser=target.browser,
+            profile=target.profile,
+            format=target.format,
+            path=Path(handle.name),
+            label=f"backup:{backup_path.name}",
+        )
+        expected = load_snapshot(backup_store)
     rollback_path = backup_target(target)
     pending_created = begin_pending_operation(target, rollback_path, "restore")
-    atomic_write_bytes(target.path, backup_path.read_bytes())
+    atomic_write_bytes(target.path, backup_bytes)
     restored = load_snapshot(target)
     if restored.portable != expected.portable:
-        atomic_write_bytes(target.path, rollback_path.read_bytes())
+        atomic_write_bytes(target.path, read_regular_bytes(rollback_path, "rollback backup"))
         clear_pending_operation(pending_created)
         raise SystemExit(f"Restore verification failed for {target.label}; current store was rolled back")
     clear_pending_operation(pending_created)
@@ -1445,47 +1565,13 @@ def rollback_failed_cloud_purge(target: BrowserStore, backup_path: Path) -> bool
         return False
 
     try:
-        atomic_write_bytes(target.path, backup_path.read_bytes())
+        atomic_write_bytes(target.path, read_regular_bytes(backup_path, "cloud-purge backup"))
         restored = load_snapshot(target)
         print(f"Cloud purge failed; restored local {target.label} from {display_path(backup_path)} ({restored.bookmark_count} bookmarks).")
         return True
     except (OSError, json.JSONDecodeError, plistlib.InvalidFileException, SystemExit) as exc:
         print(f"Cloud purge rollback failed for {target.label}: {exc}. Backup: {display_path(backup_path)}")
         return False
-
-
-def reset_edge_cloud_via_empty_file_then_sync(
-    source: BookmarkSnapshot,
-    target: BrowserStore,
-    mode: str,
-    wait_seconds: float,
-    backup_enabled: bool = True,
-) -> tuple[Path | None, Path | None, SyncVerification]:
-    if target.browser != "edge" or target.format != "chromium":
-        raise SystemExit("--edge-empty-then-sync only supports edge Chromium targets")
-    require_cloud_purge_backup(backup_enabled)
-
-    clear_backup = backup_target(target)
-    pending_created = begin_pending_operation(target, clear_backup, "cloud-safe")
-    try:
-        open_browser(target.browser)
-        clear_chromium_bookmark_file(target)
-        cleared = load_snapshot(target)
-        print(f"Edge empty phase: cleared local bookmark file to {cleared.bookmark_count} bookmarks.")
-        print(f"Edge empty phase backup: {display_path(clear_backup)}")
-        print(f"Waiting {wait_seconds:g}s for Edge to observe and sync the empty bookmark state...")
-        time.sleep(wait_seconds)
-        after_wait = load_snapshot(target)
-        print(f"Edge empty phase after wait: {after_wait.bookmark_count} bookmarks.")
-
-        ensure_browsers_closed({target.browser}, auto_close=True)
-        sync_backup, verification = sync_store(source, target, mode, backup_enabled=True)
-        clear_pending_operation(pending_created)
-        return clear_backup, sync_backup, verification
-    except BaseException:
-        if rollback_failed_cloud_purge(target, clear_backup):
-            clear_pending_operation(pending_created)
-        raise
 
 
 def reset_chromium_cloud_via_api_then_sync(
@@ -1956,8 +2042,12 @@ def preview_run(source: BookmarkSnapshot, targets: list[BookmarkSnapshot]) -> in
 
 
 def noninteractive_mode(args: argparse.Namespace, snapshots: list[BookmarkSnapshot]) -> int:
-    preferred_source_id = get_primary_store_id()
     if args.list:
+        try:
+            preferred_source_id = get_primary_store_id()
+        except SystemExit as exc:
+            print(f"State warning: {exc}")
+            preferred_source_id = None
         summarize_snapshots(snapshots, preferred_source_id=preferred_source_id)
         return 0
 
@@ -2004,30 +2094,6 @@ def noninteractive_mode(args: argparse.Namespace, snapshots: list[BookmarkSnapsh
         return preview_run(source, targets)
 
     required_browsers = {source.store.browser, *(target.store.browser for target in targets)}
-
-    if args.edge_empty_then_sync:
-        require_cloud_purge_consent(args.allow_cloud_purge)
-        if len(targets) != 1 or targets[0].store.browser != "edge":
-            raise SystemExit("--edge-empty-then-sync requires exactly one Edge target")
-        ensure_browsers_closed(required_browsers, auto_close=args.auto_close)
-        source = load_snapshot_with_retry(source.store)
-        clear_backup, sync_backup, verification = reset_edge_cloud_via_empty_file_then_sync(
-            source,
-            targets[0].store,
-            args.mode,
-            args.edge_empty_wait,
-            backup_enabled=not args.no_backup,
-        )
-        reloaded = verification.reloaded
-        print(f"Synced {source.store.label} -> {targets[0].store.label} after Edge empty phase")
-        if clear_backup is not None:
-            print(f"Empty phase backup: {display_path(clear_backup)}")
-        if sync_backup is not None:
-            print(f"Sync backup: {display_path(sync_backup)}")
-        print(f"Result: {reloaded.bookmark_count} bookmarks")
-        print_verification_summary(verification)
-        print_order_warning(source, verification)
-        return 0
 
     if args.edge_api_clear_then_sync:
         require_cloud_purge_consent(args.allow_cloud_purge)
@@ -2134,17 +2200,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated browser names to open after syncing, wait through a delayed drift window, then auto-close and repair once if drift appeared",
     )
     parser.add_argument(
-        "--edge-empty-then-sync",
-        action="store_true",
-        help="Experimental Edge repair: while Edge is open, clear its bookmark file, wait for empty-state sync, then close Edge and sync source bookmarks back",
-    )
-    parser.add_argument(
-        "--edge-empty-wait",
-        type=float,
-        default=EDGE_EMPTY_SYNC_WAIT_SECONDS,
-        help="Seconds to wait after clearing Edge bookmarks before syncing source bookmarks back",
-    )
-    parser.add_argument(
         "--edge-api-clear-then-sync",
         action="store_true",
         help="Experimental Chromium repair: launch Chrome or Edge with a temporary extension that deletes all bookmarks through the browser API, wait for cloud settle, then sync source bookmarks back",
@@ -2158,7 +2213,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--edge-api-settle-wait",
         type=float,
-        default=EDGE_EMPTY_SYNC_WAIT_SECONDS,
+        default=CLOUD_SETTLE_WAIT_SECONDS,
         help="Seconds to keep Edge open after the API purge reaches zero so cloud sync can converge before restoring bookmarks",
     )
     parser.add_argument(

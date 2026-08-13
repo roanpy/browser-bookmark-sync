@@ -58,6 +58,7 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
 
     def test_default_target_ids_excludes_source(self) -> None:
         self.assertEqual(sync_bookmarks.default_target_ids("chrome:Default"), ["edge:Default", "safari"])
+        self.assertEqual(sync_bookmarks.default_target_ids("chrome:Profile 1"), ["edge:Default", "safari"])
 
     def test_build_sync_command_uses_default_targets_and_defaults(self) -> None:
         parser = sync_bookmarks.build_parser()
@@ -141,6 +142,19 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
             ["--source", "chrome:Default", "--targets", "edge:Default,safari"],
         )
 
+    def test_build_sync_command_preserves_named_profiles_and_deduplicates_targets(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(
+            ["--from", "Chrome:Profile 1", "--to", "Edge:Work", "edge:Work", "safari"]
+        )
+
+        command = sync_bookmarks.build_sync_command(args)
+
+        self.assertEqual(
+            command[2:6],
+            ["--source", "chrome:Profile 1", "--targets", "edge:Work,safari"],
+        )
+
     def test_build_sync_command_conflicts_source_and_from(self) -> None:
         parser = sync_bookmarks.build_parser()
         args = parser.parse_args(["chrome", "--from", "safari", "--to", "edge"])
@@ -195,6 +209,17 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
 
         self.assertTrue(args.json)
         self.assertNotIn("--json", command)
+
+    def test_restore_json_metadata_redacts_home_directory(self) -> None:
+        parser = sync_bookmarks.build_parser()
+        args = parser.parse_args(
+            ["--restore-backup", str(Path.home() / "Downloads" / "private.bak"), "--restore-target", "edge", "--json"]
+        )
+
+        metadata = sync_bookmarks.json_metadata(args)
+
+        self.assertEqual(metadata["backup"], "~/Downloads/private.bak")
+        self.assertNotIn(str(Path.home()), metadata["backup"])
 
     def test_json_cli_reports_argument_validation_errors(self) -> None:
         result = subprocess.run(

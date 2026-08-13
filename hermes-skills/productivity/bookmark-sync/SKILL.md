@@ -1,7 +1,7 @@
 ---
 name: bookmark-sync
 description: Detect and sync local Chrome, Edge, Safari, Brave, Vivaldi, and Opera bookmark stores with automatic backups.
-version: 1.6.0
+version: 1.7.0
 author: roanpy
 license: MIT
 platforms: [macos]
@@ -18,6 +18,7 @@ After installation, use `bookmark-sync` from any directory. From a checkout, `./
 
 - Inspect with `./sync-bookmarks --list` or `--mode preview` when direction is uncertain.
 - Real syncs must specify source and targets explicitly.
+- Use full store IDs from `--list --json` when a browser has multiple profiles.
 - Keep automatic backups enabled unless the user explicitly requests a direct-only run; cloud purge cannot run without a backup.
 - Pass `--auto-close` only when the user authorizes closing affected browsers.
 - Pass `--allow-cloud-purge` only when the user explicitly authorizes Chrome/Edge cloud-safe remediation.
@@ -41,6 +42,7 @@ bookmark-sync --recover --auto-close
 bookmark-sync --doctor all --json
 python3 bookmark_sync.py --calibrate edge
 bookmark-sync --from chrome --to edge safari --mode preview --json
+bookmark-sync --from "chrome:Profile 1" --to "edge:Work" --mode preview --json
 ```
 
 ## Verification

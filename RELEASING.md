@@ -16,6 +16,7 @@ To publish only source and wheel assets, no Apple credentials are required. To a
 Do not commit the certificate, passwords, API tokens, or exported keychain. The workflow fails if only part of the Apple credential set is configured; it otherwise falls back to the safe source-and-wheel release mode.
 
 Protect `v*` tags from deletion and non-fast-forward updates so published releases cannot be rewritten. The workflow checks out the tagged source without persisting GitHub credentials and receives signing credentials only inside the restricted `release` environment.
+It also rejects tags whose commit is not part of `main` history.
 
 ## Release Steps
 

@@ -8,15 +8,18 @@ dynamic = ["version"]
 description = "Safe, local-first bookmark mirroring and repair across macOS browsers"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["bookmarks", "browser", "chrome", "edge", "safari", "sync"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP :: Browsers",
 ]
 dependencies = []

@@ -4,9 +4,25 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUTPUT=${1:-"$SCRIPT_DIR/dist/Bookmark Sync.app"}
 RESOURCE_DIR="$OUTPUT/Contents/Resources/bin"
+INFO_PLIST="$OUTPUT/Contents/Info.plist"
+VERSION=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SCRIPT_DIR" python3 -c 'from bookmark_sync_version import __version__; print(__version__)')
 
 mkdir -p "$(dirname -- "$OUTPUT")"
 osacompile -o "$OUTPUT" "$SCRIPT_DIR/bookmark-sync-app.applescript"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string io.github.roanpy.bookmark-sync" "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.roanpy.bookmark-sync" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription Bookmark Sync closes selected browsers before safely updating their bookmark files." "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :NSAppDataUsageDescription string Bookmark Sync reads and updates bookmark files for the browser profiles you select." "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :NSAppDataUsageDescription Bookmark Sync reads and updates bookmark files for the browser profiles you select." "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :NSDownloadsFolderUsageDescription string Bookmark Sync saves private rollback backups in your Downloads folder." "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :NSDownloadsFolderUsageDescription Bookmark Sync saves private rollback backups in your Downloads folder." "$INFO_PLIST"
+for key in NSAppleMusicUsageDescription NSCalendarsUsageDescription NSCameraUsageDescription NSContactsUsageDescription NSHomeKitUsageDescription NSMicrophoneUsageDescription NSPhotoLibraryUsageDescription NSRemindersUsageDescription NSSiriUsageDescription NSSystemAdministrationUsageDescription; do
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$INFO_PLIST" 2>/dev/null || true
+done
 mkdir -p "$RESOURCE_DIR"
 cp "$SCRIPT_DIR/bookmark_sync.py" "$RESOURCE_DIR/bookmark_sync.py"
 cp "$SCRIPT_DIR/bookmark_sync_version.py" "$RESOURCE_DIR/bookmark_sync_version.py"

@@ -24,6 +24,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 
 - Inspect with `./sync-bookmarks --list` or `--mode preview` before uncertain writes.
 - Real runs should pass an explicit source and targets.
+- Use full store IDs from `--list --json` for non-default or multiple browser profiles.
 - Backups are enabled by default and cover only targets in the current run.
 - Do not pass `--no-backup` unless the user explicitly requests a direct-only run; cloud purge always requires a backup.
 - Browsers must be closed. Pass `--auto-close` only with user authorization.
@@ -61,6 +62,7 @@ bookmark-sync --calibrate edge
 
 # JSON result for automation
 bookmark-sync --from chrome --to edge safari --mode preview --json
+bookmark-sync --from "chrome:Profile 1" --to "edge:Work" --mode preview --json
 ```
 
 After installation with `python3 -m pip install --user .` or `pipx install .`, use `bookmark-sync` from any directory. Add `--json` when another Agent, script, or CI job needs a machine-readable result; human diagnostics are written to stderr.

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Block writes when runtime state is invalid so interruption recovery cannot be silently bypassed.
+- Reject linked bookmark, backup, and runtime-state files and sync parent directories after atomic replacement.
+- Accept named Chromium profile IDs in the installable CLI and macOS app.
+- Add stable macOS bundle version/identifier metadata and remove unrelated generated privacy purpose strings.
+- Replace deprecated package-license metadata and remove the superseded Edge file-clear experiment.
+- Require release tags to point to commits from `main` history.
+
 ## [0.2.1] - 2026-08-12
 
 - Keep locally built and signed macOS apps sealed after the bundled Python CLI launches child processes.

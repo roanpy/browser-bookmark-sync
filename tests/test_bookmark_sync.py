@@ -114,6 +114,82 @@ class BookmarkSyncTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b"original")
             self.assertEqual(list(Path(tmpdir).iterdir()), [target])
 
+    def test_atomic_write_syncs_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "Bookmarks"
+            with mock.patch.object(bookmark_sync, "sync_directory") as sync_directory:
+                bookmark_sync.atomic_write_bytes(target, b"replacement")
+
+            sync_directory.assert_called_once_with(target.parent)
+
+    def test_atomic_write_refuses_symlink_and_hardlink_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            original = root / "original"
+            original.write_bytes(b"private")
+            symlink = root / "symlink"
+            symlink.symlink_to(original)
+            hardlink = root / "hardlink"
+            hardlink.hardlink_to(original)
+
+            with self.assertRaisesRegex(SystemExit, "linked or non-regular"):
+                bookmark_sync.atomic_write_bytes(symlink, b"replacement")
+            with self.assertRaisesRegex(SystemExit, "linked or non-regular"):
+                bookmark_sync.atomic_write_bytes(hardlink, b"replacement")
+            self.assertEqual(original.read_bytes(), b"private")
+
+    def test_invalid_runtime_state_blocks_writes(self) -> None:
+        bookmark_sync.STATE_FILE.write_text("not-json")
+
+        with self.assertRaisesRegex(SystemExit, "Writes are blocked"):
+            bookmark_sync.require_no_pending_operation()
+
+    def test_invalid_runtime_state_does_not_block_read_only_list(self) -> None:
+        bookmark_sync.STATE_FILE.write_text("not-json")
+        snapshot = make_snapshot(make_store("chrome:Default", "chrome"), {"bar": [], "menu": [], "synced": []})
+        args = bookmark_sync.build_parser().parse_args(["--list"])
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            result = bookmark_sync.noninteractive_mode(args, [snapshot])
+
+        self.assertEqual(result, 0)
+        self.assertIn("State warning:", output.getvalue())
+        self.assertIn("chrome:Default", output.getvalue())
+
+    def test_dangling_runtime_state_link_blocks_writes(self) -> None:
+        bookmark_sync.STATE_FILE.symlink_to(Path(self.runtime_dir.name) / "missing-state")
+
+        with self.assertRaisesRegex(SystemExit, "Writes are blocked"):
+            bookmark_sync.require_no_pending_operation()
+
+    def test_restore_refuses_linked_backup(self) -> None:
+        runtime = Path(self.runtime_dir.name)
+        original = runtime / "original.bak"
+        original.write_text("{}")
+        linked = runtime / "linked.bak"
+        linked.symlink_to(original)
+
+        with self.assertRaisesRegex(SystemExit, "Could not open backup file"):
+            bookmark_sync.restore_store_backup(linked, make_store("edge:Default", "edge"))
+
+    def test_restore_validates_the_same_bytes_it_writes(self) -> None:
+        runtime = Path(self.runtime_dir.name)
+        backup = runtime / "restore.bak"
+        target = make_store("edge:Default", "edge")
+        target.path = runtime / "Bookmarks"
+        target.path.write_text("current")
+
+        with (
+            mock.patch.object(bookmark_sync, "read_regular_bytes", return_value=b"{}"),
+            mock.patch.object(bookmark_sync, "backup_target") as backup_target,
+            self.assertRaisesRegex(SystemExit, "missing required roots"),
+        ):
+            bookmark_sync.restore_store_backup(backup, target)
+
+        backup_target.assert_not_called()
+        self.assertEqual(target.path.read_text(), "current")
+
     def test_backup_target_does_not_leave_a_partial_backup(self) -> None:
         runtime = Path(self.runtime_dir.name)
         source = runtime / "Bookmarks"
@@ -129,6 +205,12 @@ class BookmarkSyncTests(unittest.TestCase):
 
         self.assertEqual(list(bookmark_sync.DOWNLOAD_BACKUP_DIR.iterdir()), [])
 
+    def test_backup_directory_refuses_dangling_symlink(self) -> None:
+        bookmark_sync.DOWNLOAD_BACKUP_DIR.symlink_to(Path(self.runtime_dir.name) / "missing-backups")
+
+        with self.assertRaisesRegex(SystemExit, "Backup directory is not a regular directory"):
+            bookmark_sync.print_backup_list()
+
     def test_operation_lock_rejects_a_second_writer(self) -> None:
         with bookmark_sync.operation_lock():
             with self.assertRaisesRegex(SystemExit, "already running"):
@@ -138,6 +220,16 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertEqual(bookmark_sync.LOCK_FILE.stat().st_mode & 0o777, 0o600)
         with bookmark_sync.operation_lock():
             pass
+
+    def test_operation_lock_refuses_symlink(self) -> None:
+        outside = Path(self.runtime_dir.name) / "outside"
+        outside.write_text("unchanged")
+        bookmark_sync.LOCK_FILE.symlink_to(outside)
+
+        with self.assertRaisesRegex(SystemExit, "open operation lock safely"):
+            with bookmark_sync.operation_lock():
+                self.fail("symlink lock was accepted")
+        self.assertEqual(outside.read_text(), "unchanged")
 
     def test_recovery_actions_are_mutually_exclusive(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -463,31 +555,6 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertEqual(bar_children[1]["WebBookmarkUUID"], "UUID-WORK")
         self.assertEqual(bar_children[1]["Children"][0]["WebBookmarkUUID"], "UUID-B")
 
-    def test_clear_chromium_bookmark_file_clears_bookmark_roots(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = make_store("edge:Default", "edge")
-            store.path = Path(tmpdir) / "Bookmarks"
-            store.path.write_text(
-                """
-{
-  "roots": {
-    "bookmark_bar": {"children": [{"type": "url", "name": "A", "url": "https://a"}]},
-    "other": {"children": [{"type": "url", "name": "B", "url": "https://b"}]},
-    "synced": {"children": [{"type": "url", "name": "C", "url": "https://c"}]}
-  },
-  "version": 1
-}
-""".strip()
-            )
-
-            bookmark_sync.clear_chromium_bookmark_file(store)
-
-            raw = json.loads(store.path.read_text())
-            self.assertEqual(raw["roots"]["bookmark_bar"]["children"], [])
-            self.assertEqual(raw["roots"]["other"]["children"], [])
-            self.assertEqual(raw["roots"]["synced"]["children"], [])
-            self.assertEqual(raw["version"], 1)
-
     def test_chromium_sync_state_detects_enabled_edge_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_dir = Path(tmpdir) / "Default"
@@ -509,9 +576,43 @@ class BookmarkSyncTests(unittest.TestCase):
 
             enabled, reason = bookmark_sync.chromium_sync_state(store)
 
+            self.assertTrue(enabled)
+            self.assertIn("bookmarks=on", reason)
+            self.assertIn("setup=done", reason)
+
+    def test_chromium_sync_state_treats_missing_preferences_as_potentially_enabled(self) -> None:
+        store = make_store("edge:Default", "edge")
+
+        enabled, reason = bookmark_sync.chromium_sync_state(store)
+
         self.assertTrue(enabled)
-        self.assertIn("bookmarks=on", reason)
-        self.assertIn("setup=done", reason)
+        self.assertIn("unknown", reason)
+
+    def test_chromium_sync_state_treats_partial_preferences_as_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir) / "Default"
+            profile_dir.mkdir(parents=True)
+            store = make_store("chrome:Default", "chrome")
+            store.path = profile_dir / "Bookmarks"
+            (profile_dir / "Preferences").write_text(json.dumps({"sync": {}}))
+
+            enabled, reason = bookmark_sync.chromium_sync_state(store)
+
+        self.assertTrue(enabled)
+        self.assertIn("fields are missing", reason)
+
+    def test_chromium_sync_state_respects_explicit_disabled_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir) / "Default"
+            profile_dir.mkdir(parents=True)
+            store = make_store("edge:Default", "edge")
+            store.path = profile_dir / "Bookmarks"
+            (profile_dir / "Preferences").write_text(json.dumps({"sync": {"bookmarks": False}}))
+
+            enabled, reason = bookmark_sync.chromium_sync_state(store)
+
+        self.assertFalse(enabled)
+        self.assertIn("bookmarks=off", reason)
 
     def test_choose_sync_strategy_uses_direct_for_edge_with_sync_without_issue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
