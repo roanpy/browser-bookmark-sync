@@ -11,6 +11,7 @@ Use `bookmark-sync` when installed. Otherwise locate the repository from `BOOKMA
 
 - Inspect with `--list` and preview an unfamiliar direction with `--mode preview`.
 - Specify real Agent runs with explicit `--from` and `--to` values.
+- Use the full store ID from `--list --json`, such as `chrome:Profile 1`, when a browser has multiple profiles.
 - Keep backups enabled. They contain complete bookmark data and must not be published.
 - If a write reports an unfinished operation, use `--recover` after authorization to close the target browser. Never use `--discard-recovery` without explicit user approval after inspecting the target and backup.
 - Use `--auto-close` only after the user authorizes closing affected browsers.
@@ -25,6 +26,7 @@ Use `bookmark-sync` when installed. Otherwise locate the repository from `BOOKMA
 bookmark-sync --list --json
 bookmark-sync --list-backups --json
 bookmark-sync --from chrome --to edge safari --mode preview --json
+bookmark-sync --from "chrome:Profile 1" --to "edge:Work" --mode preview --json
 bookmark-sync --from chrome --to edge safari --auto-close
 bookmark-sync --from chrome --to edge --auto-close --allow-cloud-purge
 bookmark-sync --restore-backup /path/to/backup --restore-target edge --auto-close

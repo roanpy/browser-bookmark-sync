@@ -31,4 +31,18 @@ jobs:
           ./build-macos-app "$app"
           BOOKMARK_SYNC_HOME="$RUNNER_TEMP/bookmark-sync-home" "$app/Contents/Resources/bin/sync-bookmarks" --list-backups --json
           test ! -d "$app/Contents/Resources/bin/__pycache__"
+          version="$(python3 -c 'from bookmark_sync_version import __version__; print(__version__)')"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "io.github.roanpy.bookmark-sync"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$version"
+          /usr/libexec/PlistBuddy -c 'Print :NSAppDataUsageDescription' "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :NSDownloadsFolderUsageDescription' "$app/Contents/Info.plist"
+          ! /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$app/Contents/Info.plist"
           codesign --verify --deep --strict "$app"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Verify current Python compatibility
+        run: |
+          python3 -m unittest discover -s tests
+          python3 -m pip wheel --disable-pip-version-check --no-deps . --wheel-dir /tmp/bookmark-sync-wheel-compat
