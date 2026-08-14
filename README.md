@@ -78,10 +78,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-Install the published `v0.2.1` wheel without cloning the repository:
+Install the published `v0.2.2` wheel without cloning the repository:
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.1/bookmark_sync-0.2.1-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.2/bookmark_sync-0.2.2-py3-none-any.whl
 ```
 
 Install the callable CLI without keeping a repository checkout:
@@ -195,7 +195,7 @@ ruff check .
 
 The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, wrapper commands, and the real JSON CLI subprocess contract. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
 
-See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.2.1`.
+See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.2.2`.
 
 Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md](TEST_MATRIX.md) before submitting browser or recovery changes.
 

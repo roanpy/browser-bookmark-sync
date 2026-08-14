@@ -27,8 +27,8 @@ It also rejects tags whose commit is not part of `main` history.
 ```bash
 git switch main
 git pull --ff-only
-git tag -a v0.2.1 -m "Release v0.2.1"
-git push origin v0.2.1
+git tag -a v0.2.2 -m "Release v0.2.2"
+git push origin v0.2.2
 ```
 
 The `release.yml` workflow then publishes the source archive, wheel, and `SHA256SUMS`. If the complete Apple credential set is configured, it also publishes a notarized `Bookmark Sync.app` zip; it never publishes an unsigned app.

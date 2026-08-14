@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.2] - 2026-08-14
 
 - Block writes when runtime state is invalid so interruption recovery cannot be silently bypassed.
 - Reject linked bookmark, backup, and runtime-state files and sync parent directories after atomic replacement.
@@ -8,6 +8,7 @@
 - Add stable macOS bundle version/identifier metadata and remove unrelated generated privacy purpose strings.
 - Replace deprecated package-license metadata and remove the superseded Edge file-clear experiment.
 - Require release tags to point to commits from `main` history.
+- Treat incomplete browser sync-state fields as potentially enabled instead of assuming sync is off.
 
 ## [0.2.1] - 2026-08-12
 
