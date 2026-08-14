@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -56,12 +57,14 @@ def normalize_to_values(values: list[str] | None) -> list[str]:
 
 
 def display_path(path: str) -> str:
-    expanded = Path(path).expanduser()
-    home = Path.home()
-    try:
-        return f"~/{expanded.relative_to(home)}"
-    except ValueError:
-        return str(expanded)
+    expanded = os.path.expanduser(path)
+    home = os.path.expanduser("~")
+    if expanded == home:
+        return "~"
+    prefix = home + os.sep
+    if expanded.startswith(prefix):
+        return "~" + expanded[len(home):]
+    return expanded
 
 
 def resolve_source(args: argparse.Namespace) -> str:
