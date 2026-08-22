@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.3] - Unreleased
+
+- Require explicit sync targets instead of silently selecting Chrome, Edge, and Safari defaults.
+
 ## [0.2.2] - 2026-08-14
 
 - Block writes when runtime state is invalid so interruption recovery cannot be silently bypassed.

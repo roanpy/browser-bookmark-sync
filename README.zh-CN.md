@@ -90,6 +90,8 @@ bookmark-sync --list
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ```
 
+同步命令必须明确指定来源和目标浏览器；同时省略位置目标和 `--to` 时，命令会停止且不会写入。
+
 浏览器存在多个配置文件时，请使用完整存储 ID：
 
 ```bash

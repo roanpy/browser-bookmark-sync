@@ -22,7 +22,6 @@ STORE_ALIASES = {
     "opera": "opera:Default",
     "safari": "safari",
 }
-DEFAULT_STORE_IDS = ["chrome:Default", "edge:Default", "safari"]
 JSON_SCHEMA_VERSION = 1
 BACKUP_PREFIXES = (
     "Backup:",
@@ -81,17 +80,12 @@ def resolve_targets(args: argparse.Namespace, source_id: str) -> list[str]:
         raise SystemExit("Use either positional targets or --to, not both.")
     target_values = args.targets if args.targets else normalize_to_values(args.to)
     if not target_values:
-        return default_target_ids(source_id)
+        raise SystemExit("target is required; specify positional TARGETS or --to explicitly")
     target_ids = list(dict.fromkeys(normalize_store_alias(value) for value in target_values))
     target_ids = [target_id for target_id in target_ids if target_id != source_id]
     if not target_ids:
         raise SystemExit("No valid targets selected")
     return target_ids
-
-
-def default_target_ids(source_id: str) -> list[str]:
-    source_browser = source_id.partition(":")[0]
-    return [store_id for store_id in DEFAULT_STORE_IDS if store_id.partition(":")[0] != source_browser]
 
 
 def build_sync_command(args: argparse.Namespace) -> list[str]:
@@ -394,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit target aliases or store ids. Supports comma-separated values, for example: --to edge,safari",
     )
-    parser.add_argument("targets", nargs="*", help="Optional target browser aliases/ids; defaults to all other supported browsers")
+    parser.add_argument("targets", nargs="*", help="Target browser aliases/ids; required for sync operations")
     parser.add_argument("--list", action="store_true", help="List detected bookmark stores")
     parser.add_argument("--list-backups", action="store_true", help="List available backups, newest first")
     recovery = parser.add_mutually_exclusive_group()

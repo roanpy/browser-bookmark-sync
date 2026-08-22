@@ -56,32 +56,12 @@ class SyncBookmarksWrapperTests(unittest.TestCase):
         }
         bookmark_file.write_text(json.dumps(raw), encoding="utf-8")
 
-    def test_default_target_ids_excludes_source(self) -> None:
-        self.assertEqual(sync_bookmarks.default_target_ids("chrome:Default"), ["edge:Default", "safari"])
-        self.assertEqual(sync_bookmarks.default_target_ids("chrome:Profile 1"), ["edge:Default", "safari"])
-
-    def test_build_sync_command_uses_default_targets_and_defaults(self) -> None:
+    def test_build_sync_command_requires_explicit_targets(self) -> None:
         parser = sync_bookmarks.build_parser()
         args = parser.parse_args(["chrome", "--no-backup"])
 
-        command = sync_bookmarks.build_sync_command(args)
-
-        self.assertEqual(command[0], sys.executable)
-        self.assertEqual(command[1], str(sync_bookmarks.ENGINE))
-        self.assertEqual(
-            command[2:],
-            [
-                "--source",
-                "chrome:Default",
-                "--targets",
-                "edge:Default,safari",
-                "--mode",
-                "strict",
-                "--sync-strategy",
-                "auto",
-                "--no-backup",
-            ],
-        )
+        with self.assertRaisesRegex(SystemExit, "target is required"):
+            sync_bookmarks.build_sync_command(args)
 
     def test_build_sync_command_passes_explicit_safety_flags(self) -> None:
         parser = sync_bookmarks.build_parser()

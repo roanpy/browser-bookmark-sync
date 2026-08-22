@@ -99,6 +99,8 @@ Preview Chrome to Edge and Safari without writing:
 ./sync-bookmarks --from chrome --to edge safari --mode preview
 ```
 
+Sync commands require explicit source and target browsers. If both positional targets and `--to` are omitted, the command stops without writing.
+
 Use a full store ID when a browser has multiple profiles:
 
 ```bash
