@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.3] - Unreleased
+## [0.2.3] - 2026-08-22
 
 - Require explicit sync targets instead of silently selecting Chrome, Edge, and Safari defaults.
 

@@ -2,9 +2,9 @@
 
 ## Supported versions / 支持版本
 
-Security fixes target the latest `main` branch and the latest published release, currently `v0.2.2`. Reproduce older-release issues against both the affected release and current `main` before reporting them.
+Security fixes target the latest `main` branch and the latest published release, currently `v0.2.3`. Reproduce older-release issues against both the affected release and current `main` before reporting them.
 
-安全修复面向最新 `main` 分支和最新公开版本（当前为 `v0.2.2`）。旧版本问题请同时在受影响版本和当前 `main` 上确认后再报告。
+安全修复面向最新 `main` 分支和最新公开版本（当前为 `v0.2.3`）。旧版本问题请同时在受影响版本和当前 `main` 上确认后再报告。
 
 ## Reporting a vulnerability / 报告漏洞
 
