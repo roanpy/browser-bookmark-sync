@@ -17,6 +17,7 @@ Use `bookmark-sync` when installed. Otherwise locate the repository from `BOOKMA
 - Use `--auto-close` only after the user authorizes closing affected browsers.
 - Use `--allow-cloud-purge` only after explicit authorization to temporarily clear the selected Chrome/Edge target cloud bookmark tree.
 - Use `--sync-strategy auto` unless the user explicitly requests another strategy.
+- `auto` mirrors with a backup, reopens sync-enabled Chromium targets to detect reinjection, then repairs drift with the browser closed; it does not clear cloud bookmarks.
 - Treat Brave, Vivaldi, and Opera cloud-synced profiles as uncalibrated; direct mode is supported when bookmark cloud sync is disabled.
 - Arc and Firefox are unsupported.
 
@@ -28,7 +29,7 @@ bookmark-sync --list-backups --json
 bookmark-sync --from chrome --to edge safari --mode preview --json
 bookmark-sync --from "chrome:Profile 1" --to "edge:Work" --mode preview --json
 bookmark-sync --from chrome --to edge safari --auto-close
-bookmark-sync --from chrome --to edge --auto-close --allow-cloud-purge
+bookmark-sync --from chrome --to edge --sync-strategy cloud-safe --auto-close --allow-cloud-purge
 bookmark-sync --restore-backup /path/to/backup --restore-target edge --auto-close
 bookmark-sync --recover --auto-close
 bookmark-sync --doctor all --json

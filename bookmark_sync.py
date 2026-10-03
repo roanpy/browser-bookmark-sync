@@ -924,8 +924,8 @@ def choose_sync_strategy(target: BrowserStore, requested_strategy: str) -> SyncS
         issue = get_cloud_issue_record(target)
         if enabled and issue:
             return SyncStrategyDecision(
-                strategy="cloud-safe",
-                reason=f"known cloud reinjection issue ({issue.get('reason')}); sync state: {reason}",
+                strategy="direct",
+                reason=f"known cloud reinjection issue ({issue.get('reason')}); will check after reopen and repair with browser closed ({reason})",
             )
         if enabled:
             return SyncStrategyDecision(strategy="direct", reason=f"sync enabled but no issue recorded yet ({reason})")
@@ -1315,6 +1315,11 @@ def render_chromium_bookmark_purge_worker(active_seconds: float) -> str:
     active_window_ms = max(1, int(active_seconds * 1000))
     return f"""const ACTIVE_WINDOW_MS = {active_window_ms};
 const ALARM_NAME = "edgeBookmarkPurge";
+const PURGE_PASS_DELAY_MS = 250;
+const REQUIRED_EMPTY_PASSES = 2;
+
+let purgeRunning = false;
+let purgeQueued = false;
 
 function storageGet(keys) {{
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -1332,41 +1337,69 @@ function clearAlarm() {{
   chrome.alarms.clear(ALARM_NAME);
 }}
 
-function getTree() {{
+function callBookmarks(callback) {{
   return new Promise((resolve, reject) => {{
-    chrome.bookmarks.getTree((tree) => {{
+    callback((result) => {{
       if (chrome.runtime.lastError) {{
         reject(new Error(chrome.runtime.lastError.message));
         return;
       }}
-      resolve(tree);
+      resolve(result);
     }});
   }});
 }}
 
-function removeNode(id, hasChildren) {{
-  return new Promise((resolve) => {{
-    const callback = () => resolve();
+function getTree() {{
+  return callBookmarks((done) => chrome.bookmarks.getTree(done));
+}}
+
+function removeNode(node) {{
+  const hasChildren = !!(node.children && node.children.length);
+  return callBookmarks((done) => {{
     if (hasChildren) {{
-      chrome.bookmarks.removeTree(id, callback);
+      chrome.bookmarks.removeTree(node.id, done);
       return;
     }}
-    chrome.bookmarks.remove(id, callback);
+    chrome.bookmarks.remove(node.id, done);
   }});
 }}
 
-async function purgePermanentNodeChildren(node) {{
-  for (const child of node.children || []) {{
-    await removeNode(child.id, !!(child.children && child.children.length));
-  }}
+function delay(milliseconds) {{
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }}
 
-async function purgeAllBookmarks() {{
-  const tree = await getTree();
+function permanentNodeChildren(tree) {{
   const root = tree[0] || {{}};
-  for (const child of root.children || []) {{
-    await purgePermanentNodeChildren(child);
+  return (root.children || []).flatMap((node) => node.children || []);
+}}
+
+async function purgeAllBookmarks(deadlineMs) {{
+  let emptyPasses = 0;
+  while (Date.now() <= deadlineMs) {{
+    let children;
+    try {{
+      children = permanentNodeChildren(await getTree());
+    }} catch (error) {{
+      await recordPurgeError(error);
+      await delay(PURGE_PASS_DELAY_MS);
+      continue;
+    }}
+    if (!children.length) {{
+      emptyPasses += 1;
+      if (emptyPasses >= REQUIRED_EMPTY_PASSES) {{
+        return true;
+      }}
+    }} else {{
+      emptyPasses = 0;
+      const results = await Promise.allSettled(children.map((child) => removeNode(child)));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) {{
+        await recordPurgeError(failure.reason);
+      }}
+    }}
+    await delay(PURGE_PASS_DELAY_MS);
   }}
+  return false;
 }}
 
 async function ensureDeadline(forceReset) {{
@@ -1381,6 +1414,14 @@ async function ensureDeadline(forceReset) {{
   return deadlineMs;
 }}
 
+async function recordPurgeError(error) {{
+  const message = error && error.message ? error.message : String(error);
+  try {{
+    await storageSet({{ lastError: message, lastErrorAt: Date.now() }});
+  }} catch (_error) {{
+  }}
+}}
+
 async function purgeWhileActive(forceReset) {{
   const deadlineMs = await ensureDeadline(forceReset);
   if (Date.now() > deadlineMs) {{
@@ -1388,43 +1429,68 @@ async function purgeWhileActive(forceReset) {{
     return;
   }}
   createAlarm();
+  if (purgeRunning) {{
+    purgeQueued = true;
+    return;
+  }}
+  purgeRunning = true;
   try {{
-    await purgeAllBookmarks();
-  }} catch (_error) {{
+    do {{
+      purgeQueued = false;
+      try {{
+        const empty = await purgeAllBookmarks(deadlineMs);
+        if (empty) {{
+          await storageSet({{ lastError: "", lastRemaining: 0 }});
+        }} else {{
+          await recordPurgeError(new Error("Timed out before the bookmark tree became empty"));
+        }}
+      }} catch (error) {{
+        await recordPurgeError(error);
+      }}
+    }} while (purgeQueued && Date.now() <= deadlineMs);
+  }} finally {{
+    purgeRunning = false;
+    if (purgeQueued && Date.now() <= deadlineMs) {{
+      requestPurge(false);
+    }}
   }}
 }}
 
+function requestPurge(forceReset) {{
+  void purgeWhileActive(forceReset).catch(recordPurgeError);
+}}
+
 chrome.runtime.onInstalled.addListener(() => {{
-  void purgeWhileActive(true);
+  requestPurge(true);
 }});
 
 chrome.runtime.onStartup.addListener(() => {{
-  void purgeWhileActive(false);
+  requestPurge(false);
 }});
 
 chrome.alarms.onAlarm.addListener((alarm) => {{
   if (alarm.name === ALARM_NAME) {{
-    void purgeWhileActive(false);
+    requestPurge(false);
   }}
 }});
 
 chrome.bookmarks.onCreated.addListener(() => {{
-  void purgeWhileActive(false);
+  requestPurge(false);
 }});
 
 chrome.bookmarks.onChanged.addListener(() => {{
-  void purgeWhileActive(false);
+  requestPurge(false);
 }});
 
 chrome.bookmarks.onMoved.addListener(() => {{
-  void purgeWhileActive(false);
+  requestPurge(false);
 }});
 
 chrome.bookmarks.onChildrenReordered.addListener(() => {{
-  void purgeWhileActive(false);
+  requestPurge(false);
 }});
 
-void purgeWhileActive(false);
+requestPurge(false);
 """
 
 
@@ -1839,7 +1905,7 @@ def should_auto_probe_after_direct(target: BrowserStore, strategy: str) -> bool:
     enabled, _reason = chromium_sync_state(target)
     if not enabled:
         return False
-    return get_cloud_issue_record(target) is None
+    return True
 
 
 def normalize_browser_filter(value: str | None) -> str:
@@ -2142,23 +2208,18 @@ def noninteractive_mode(args: argparse.Namespace, snapshots: list[BookmarkSnapsh
                 backup_enabled=not args.no_backup,
             )
             if drifted:
-                print(f"Auto probe: {target.store.browser} drifted after opening. Marking this target as a cloud reinjection case and retrying with cloud-safe sync.")
+                print(f"Auto probe: {target.store.browser} drifted after opening. Marking this target as a cloud reinjection case and repairing with the browser closed.")
                 mark_cloud_issue(target.store, f"post-open drift detected for {target.store.id}")
-                require_cloud_purge_consent(args.allow_cloud_purge)
-                clear_backup, sync_backup, verification = reset_chromium_cloud_via_api_then_sync(
+                backup_path, verification = sync_store(
                     source,
                     target.store,
                     args.mode,
-                    args.edge_api_purge_window,
-                    args.edge_api_settle_wait,
                     backup_enabled=not args.no_backup,
                 )
                 reloaded = verification.reloaded
-                print(f"Cloud-safe resync complete for {target.store.label}")
-                if clear_backup is not None:
-                    print(f"API purge phase backup: {display_path(clear_backup)}")
-                if sync_backup is not None:
-                    print(f"Sync backup: {display_path(sync_backup)}")
+                print(f"Closed-browser repair complete for {target.store.label}")
+                if backup_path is not None:
+                    print(f"Repair backup: {display_path(backup_path)}")
                 print(f"Result: {reloaded.bookmark_count} bookmarks")
                 print_verification_summary(verification)
                 print_order_warning(source, verification)
@@ -2220,7 +2281,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sync-strategy",
         choices=["auto", "direct", "cloud-safe"],
         default="auto",
-        help="Target write strategy: auto starts with direct writes and upgrades Chrome/Edge targets to cloud-safe after a detected or remembered cloud reinjection issue; direct always writes locally; cloud-safe forces the Chromium API purge flow",
+        help="Target write strategy: auto uses direct writes, checks sync-enabled Chromium targets after reopen, and repairs drift with the browser closed; direct writes locally without an automatic reopen check; cloud-safe forces the Chromium API purge flow",
     )
     parser.add_argument("--allow-cloud-purge", action="store_true", help="Explicitly allow cloud-safe to delete target bookmarks before restoring the source")
     parser.add_argument("--no-backup", action="store_true", help="Disable automatic target backups for direct sync only; incompatible with cloud purge")

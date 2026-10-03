@@ -16,7 +16,7 @@ Canonical automation guide for the repository. User-facing installation and safe
 ## Supported browsers
 
 - Chrome, Edge, Safari: direct sync.
-- Chrome and Edge: cloud reinjection detection and cloud-safe remediation.
+- Chrome and Edge: automatic post-open reinjection detection and closed-browser repair; cloud-safe purge is explicit and destructive.
 - Brave, Vivaldi, Opera: tested direct sync when bookmark cloud sync is disabled.
 - Arc and Firefox: unsupported because they require separate format handlers.
 
@@ -28,7 +28,8 @@ Canonical automation guide for the repository. User-facing installation and safe
 - Backups are enabled by default and cover only targets in the current run.
 - Do not pass `--no-backup` unless the user explicitly requests a direct-only run; cloud purge always requires a backup.
 - Browsers must be closed. Pass `--auto-close` only with user authorization.
-- Cloud-safe temporarily clears target cloud bookmarks. Pass `--allow-cloud-purge` only after explicit user authorization.
+- `auto` uses backed-up direct mirroring, then reopens sync-enabled Chromium targets and repairs detected drift with the browser closed.
+- Cloud-safe temporarily clears target bookmarks. Use `--sync-strategy cloud-safe --allow-cloud-purge` only after explicit user authorization.
 - If cloud purge fails, report whether the pre-purge local backup was restored and include its path.
 - Resolve unfinished operations with `--recover` before new writes; use `--discard-recovery` only with explicit user approval after inspection.
 - Prefer `--mode strict` for real syncs.
@@ -49,8 +50,8 @@ bookmark-sync --list-backups --json
 # Strict direct/auto sync with authorized browser closing
 ./sync-bookmarks --from chrome --to edge safari --auto-close
 
-# Allow known Chrome/Edge cloud remediation
-./sync-bookmarks --from chrome --to edge --auto-close --allow-cloud-purge
+# Explicitly allow a destructive Chrome/Edge cloud purge
+./sync-bookmarks --from chrome --to edge --sync-strategy cloud-safe --auto-close --allow-cloud-purge
 
 # Restore a target from backup
 ./sync-bookmarks --restore-backup /path/to/backup --restore-target edge --auto-close

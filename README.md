@@ -31,7 +31,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 
 ## The problems it solves
 
-- **Edge cloud reinjection:** a local bookmark-file replacement can appear correct, then Edge Sync restores stale cloud entries after the browser opens. The `auto` strategy detects this drift, records it per target, and switches affected Chrome/Edge profiles to a browser-API purge, cloud-settle, and restore workflow.
+- **Edge cloud reinjection:** a local bookmark-file replacement can appear correct, then Edge Sync restores stale cloud entries after the browser opens. The `auto` strategy records the issue, reopens the target to detect drift, then repairs the local tree with the browser closed. It does not clear cloud bookmarks automatically.
 - **Different browser formats:** Chromium browsers use JSON bookmark trees while Safari uses a property list with different roots and metadata. A portable tree maps bookmark bar, menu, folders, URLs, and supported synced roots without copying one browser's raw file into another.
 - **Identity churn:** unchanged Chromium IDs/GUIDs and Safari UUIDs are reused when nodes match, reducing needless delete/recreate behavior and cloud-sync noise.
 - **Unsafe one-shot scripts:** every target is backed up by default, writes are atomically replaced and directory-synced, results are reloaded and compared, and restore creates its own rollback backup.
@@ -43,7 +43,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 | Capability | What it provides |
 | --- | --- |
 | Explicit direction | Choose any detected supported browser as source and one or more targets. |
-| Two sync strategies | Fast direct writes for normal/local profiles; cloud-safe remediation only for confirmed Chrome/Edge reinjection cases. |
+| Two sync strategies | `auto` uses backed-up direct writes plus post-open drift repair; cloud-safe purge remains an explicit, destructive option for Chrome/Edge. |
 | Data-loss guards | Target backup, restrictive permissions, single-writer lock, interruption recovery, linked-file rejection, durable atomic replacement, post-write verification, and verified restore with rollback. |
 | Local-first privacy | No telemetry, API key, hosted service, or bookmark upload. Runtime state stores hashes and timing observations, not URLs. |
 | Agent-friendly interface | Installable deterministic CLI with stable JSON output plus optional Codex/Hermes Skill instructions. The Skill is an adapter; the CLI remains the product core. |
@@ -54,7 +54,7 @@ This project was developed primarily with OpenAI Codex as the main coding and in
 | Browser | Direct sync | Cloud-safe remediation | Validation status |
 | --- | --- | --- | --- |
 | Chrome | Yes | Yes | Real local profile and isolated logic tests |
-| Edge | Yes | Yes | Real local/cloud calibration and reinjection remediation |
+| Edge | Yes | Explicit, account-dependent | Real local/cloud calibration; automatic post-open repair validated |
 | Safari | Yes | Direct verification only | Real local profile |
 | Brave | Yes | Not calibrated | Isolated profile, all Chromium cross-directions |
 | Vivaldi | Yes | Not calibrated | Isolated profile, all Chromium cross-directions |
@@ -78,10 +78,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-Install the published `v0.2.3` wheel without cloning the repository:
+Install the published `v0.2.4` wheel without cloning the repository:
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.3/bookmark_sync-0.2.3-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.4/bookmark_sync-0.2.4-py3-none-any.whl
 ```
 
 Install the callable CLI without keeping a repository checkout:
@@ -133,10 +133,10 @@ Run a strict sync. Close affected browsers first, or explicitly let the tool clo
 ./sync-bookmarks --from chrome --to edge safari --auto-close
 ```
 
-If `auto` selects cloud-safe remediation, explicitly authorize the temporary target-cloud purge:
+To explicitly use the destructive cloud-safe strategy, authorize the temporary target-cloud purge:
 
 ```bash
-./sync-bookmarks --from chrome --to edge --auto-close --allow-cloud-purge
+./sync-bookmarks --from chrome --to edge --sync-strategy cloud-safe --auto-close --allow-cloud-purge
 ```
 
 Restore a backup; the current target is backed up again before restoration:
@@ -167,7 +167,7 @@ open "dist/Bookmark Sync.app"
 
 The bundled launcher disables Python bytecode writes so normal app use does not modify signed resources.
 
-The app confirms source, targets, browser closing, backups, and possible cloud purge before running. Public binary distribution still requires a Developer ID signature and Apple notarization; this repository publishes source, not a notarized binary.
+The app confirms source, targets, browser closing, backups, and possible cloud purge before running. Public binary distribution requires a Developer ID signature and Apple notarization; the release workflow attaches a macOS app only when the full Apple credential set is configured.
 
 The tag-driven release workflow is documented in [RELEASING.md](RELEASING.md). It can publish source and wheel assets without credentials, and adds a signed/notarized macOS app only when the complete Apple credential set is configured. Certificates, passwords, and tokens never enter the repository.
 
@@ -175,6 +175,7 @@ The tag-driven release workflow is documented in [RELEASING.md](RELEASING.md). I
 
 - Cloud purge always requires `--allow-cloud-purge` and cannot be combined with `--no-backup`.
 - If cloud purge fails, the tool closes the target browser and makes a best-effort local rollback from the pre-purge backup.
+- `auto` does not clear cloud bookmarks. For sync-enabled Chromium targets it reopens the browser, detects reinjection, then repairs the target after closing it.
 - Source bookmarks are reloaded after affected browsers close, avoiding a stale pre-shutdown snapshot.
 - Atomic-write temporary files are removed even when replacement fails.
 - Bookmark stores, backups, and runtime state must be single-link regular files; symbolic links and multi-linked files are rejected before reads or replacement.
@@ -184,7 +185,7 @@ The tag-driven release workflow is documented in [RELEASING.md](RELEASING.md). I
 
 The temporary Chrome/Edge extension uses the documented Chromium `bookmarks` API and exists only for the cloud-safe run. See the official [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks) and [Microsoft Edge extension API support](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/api-support).
 
-Cloud-safe mode is a targeted bookmark repair, not Microsoft's account-level reset. If Edge reports a general sync failure, first export favorites and use Edge's official [Re-sync or Reset sync procedure](https://learn.microsoft.com/en-us/deployedge/edge-learnmore-reset-data-in-cloud). Safari bookmarks remain governed by iCloud; Apple documents automatic archives and recovery at [iCloud bookmark recovery](https://support.apple.com/en-lamr/111761).
+Cloud-safe mode is an explicit targeted bookmark purge, not Microsoft's account-level reset, and may not converge in every Edge account state. If Edge reports a general sync failure, first export favorites and use Edge's official [Re-sync or Reset sync procedure](https://learn.microsoft.com/en-us/deployedge/edge-learnmore-reset-data-in-cloud). Safari bookmarks remain governed by iCloud; Apple documents automatic archives and recovery at [iCloud bookmark recovery](https://support.apple.com/en-lamr/111761).
 
 ## Validation
 
@@ -197,7 +198,7 @@ ruff check .
 
 The automated suite covers conversion, stable metadata reuse, strategy selection, cloud-purge consent and rollback, backup/restore, stabilization, wrapper commands, and the real JSON CLI subprocess contract. Brave, Vivaldi, and Opera were also manually tested in isolated profiles in all six source/target directions, including browser reopen and byte-for-byte backup restoration.
 
-See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.2.3`.
+See [CHANGELOG.md](CHANGELOG.md) for the version history. The latest published release is `v0.2.4`.
 
 Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md](TEST_MATRIX.md) before submitting browser or recovery changes.
 
@@ -206,6 +207,6 @@ Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [TEST_MATRIX.md]
 - Bookmark mirroring only; history, passwords, tabs, extensions, and browser settings are never modified.
 - This tool does not merge concurrent edits or replace native browser cloud sync.
 - Safari's private on-disk format is handled conservatively and may require updates after macOS changes.
-- Chrome/Edge cloud-safe mode is intentionally destructive to the selected target bookmark tree before restoring the chosen source; preview and backup are the safety boundary.
+- Explicit Chrome/Edge cloud-safe mode is intentionally destructive to the selected target bookmark tree before restoring the chosen source; preview and backup are the safety boundary.
 
 Security reports should follow [SECURITY.md](SECURITY.md). MIT licensed. Browser names and trademarks belong to their respective owners; this project is not affiliated with them.

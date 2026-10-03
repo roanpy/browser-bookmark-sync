@@ -3,6 +3,8 @@ import importlib.util
 import io
 import json
 import plistlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -639,7 +641,7 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertEqual(decision.strategy, "direct")
         self.assertIn("sync enabled but no issue recorded yet", decision.reason)
 
-    def test_choose_sync_strategy_uses_cloud_safe_for_edge_with_recorded_issue(self) -> None:
+    def test_choose_sync_strategy_uses_direct_and_post_open_repair_for_recorded_edge_issue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_dir = Path(tmpdir) / "Default"
             profile_dir.mkdir(parents=True)
@@ -662,8 +664,9 @@ class BookmarkSyncTests(unittest.TestCase):
                 bookmark_sync.mark_cloud_issue(store, "post-open drift detected")
                 decision = bookmark_sync.choose_sync_strategy(store, "auto")
 
-        self.assertEqual(decision.strategy, "cloud-safe")
+        self.assertEqual(decision.strategy, "direct")
         self.assertIn("known cloud reinjection issue", decision.reason)
+        self.assertIn("repair with browser closed", decision.reason)
 
     def test_choose_sync_strategy_uses_direct_for_edge_without_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -733,6 +736,141 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertIn("alarms", manifest["permissions"])
         self.assertIn("chrome.bookmarks.getTree", worker)
         self.assertIn("chrome.bookmarks.onCreated", worker)
+
+    def test_chromium_purge_worker_retries_delete_errors_and_cloud_reinjections(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("node is required to execute the generated service worker")
+
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(2.0)
+        harness = f"""
+const worker = {json.dumps(worker)};
+const listeners = {{}};
+const storage = {{}};
+const tree = [{{
+  id: "0",
+  children: [
+    {{
+      id: "1",
+      children: [
+        {{ id: "11", children: [] }},
+        {{ id: "12", children: [{{ id: "121", children: [] }}] }},
+      ],
+    }},
+    {{ id: "2", children: [{{ id: "21", children: [] }}] }},
+  ],
+}}];
+const failOnce = new Set(["11"]);
+let readded = false;
+
+function listenerRegistry(name) {{
+  return {{ addListener(callback) {{ (listeners[name] ||= []).push(callback); }} }};
+}}
+
+function emit(name, ...args) {{
+  for (const callback of listeners[name] || []) callback(...args);
+}}
+
+function snapshot(value) {{
+  return JSON.parse(JSON.stringify(value));
+}}
+
+function countNodes(nodes) {{
+  return nodes.reduce((count, node) => count + 1 + countNodes(node.children || []), 0);
+}}
+
+function removeById(nodes, id) {{
+  const index = nodes.findIndex((node) => node.id === id);
+  if (index >= 0) {{
+    nodes.splice(index, 1);
+    return true;
+  }}
+  return nodes.some((node) => removeById(node.children || [], id));
+}}
+
+function removeBookmark(id, callback) {{
+  setImmediate(() => {{
+    if (failOnce.delete(id)) {{
+      chrome.runtime.lastError = {{ message: "simulated transient delete failure" }};
+      callback();
+      chrome.runtime.lastError = null;
+      return;
+    }}
+    if (!removeById(tree[0].children, id)) {{
+      chrome.runtime.lastError = {{ message: "simulated missing node" }};
+      callback();
+      chrome.runtime.lastError = null;
+      return;
+    }}
+    chrome.runtime.lastError = null;
+    callback();
+    if (!readded) {{
+      readded = true;
+      setTimeout(() => {{
+        const node = {{ id: "cloud-1", children: [] }};
+        tree[0].children[0].children.push(node);
+        emit("created", node.id, node);
+        emit("changed", node.id, {{ title: "cloud" }});
+      }}, 900);
+    }}
+  }});
+}}
+
+const chrome = {{
+  runtime: {{
+    lastError: null,
+    onInstalled: listenerRegistry("installed"),
+    onStartup: listenerRegistry("startup"),
+  }},
+  storage: {{
+    local: {{
+      get(keys, callback) {{
+        callback(Object.fromEntries(keys.map((key) => [key, storage[key]])));
+      }},
+      set(values, callback) {{
+        Object.assign(storage, values);
+        if (callback) callback();
+      }},
+    }},
+  }},
+  alarms: {{
+    create() {{}},
+    clear() {{}},
+    onAlarm: listenerRegistry("alarm"),
+  }},
+  bookmarks: {{
+    getTree(callback) {{
+      setImmediate(() => {{
+        chrome.runtime.lastError = null;
+        callback(snapshot(tree));
+      }});
+    }},
+    remove: removeBookmark,
+    removeTree: removeBookmark,
+    onCreated: listenerRegistry("created"),
+    onChanged: listenerRegistry("changed"),
+    onMoved: listenerRegistry("moved"),
+    onChildrenReordered: listenerRegistry("reordered"),
+  }},
+}};
+
+globalThis.chrome = chrome;
+eval(worker);
+
+setTimeout(() => {{
+  const remaining = countNodes(tree[0].children.flatMap((node) => node.children || []));
+  if (remaining !== 0 || storage.lastRemaining !== 0 || storage.lastError !== "") {{
+    console.error(JSON.stringify({{ remaining, storage }}));
+    process.exit(1);
+  }}
+  if (!readded) {{
+    console.error("synthetic cloud reinjection did not run");
+    process.exit(1);
+  }}
+}}, 2400);
+"""
+        result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=7, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_chromium_api_clear_then_sync_runs_purge_then_sync(self) -> None:
         source_store = make_store("chrome:Default", "chrome")
@@ -822,7 +960,7 @@ class BookmarkSyncTests(unittest.TestCase):
 
         rollback.assert_called_once_with(target_store, backup_path)
 
-    def test_should_auto_probe_after_direct_requires_sync_without_recorded_issue(self) -> None:
+    def test_should_auto_probe_after_direct_for_synced_chromium_even_with_recorded_issue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_dir = Path(tmpdir) / "Default"
             profile_dir.mkdir(parents=True)
@@ -847,8 +985,68 @@ class BookmarkSyncTests(unittest.TestCase):
                 )
             )
 
-            self.assertTrue(bookmark_sync.should_auto_probe_after_direct(store, "auto"))
+            state_path = Path(tmpdir) / "state.json"
+            with mock.patch.object(bookmark_sync, "STATE_FILE", state_path):
+                self.assertTrue(bookmark_sync.should_auto_probe_after_direct(store, "auto"))
+                bookmark_sync.mark_cloud_issue(store, "post-open drift detected")
+                self.assertTrue(bookmark_sync.should_auto_probe_after_direct(store, "auto"))
             self.assertFalse(bookmark_sync.should_auto_probe_after_direct(store, "direct"))
+
+    def test_auto_probe_repairs_drift_with_closed_browser_sync_without_purge(self) -> None:
+        source_store = make_store("chrome:Default", "chrome")
+        target_store = make_store("edge:Default", "edge")
+        portable = {"bar": [{"type": "url", "name": "A", "url": "https://a"}], "menu": [], "synced": []}
+        source = make_snapshot(source_store, portable)
+        target = make_snapshot(target_store, portable)
+        initial = bookmark_sync.SyncVerification(
+            reloaded=target,
+            same_count=True,
+            same_portable=True,
+            source_signature="source",
+            target_signature="initial",
+        )
+        drifted = bookmark_sync.SyncVerification(
+            reloaded=make_snapshot(target_store, {"bar": [], "menu": [], "synced": []}),
+            same_count=False,
+            same_portable=False,
+            source_signature="source",
+            target_signature="drifted",
+        )
+        repaired = bookmark_sync.SyncVerification(
+            reloaded=target,
+            same_count=True,
+            same_portable=True,
+            source_signature="source",
+            target_signature="repaired",
+        )
+        args = bookmark_sync.build_parser().parse_args(
+            ["--source", "chrome:Default", "--targets", "edge:Default", "--auto-close", "--allow-cloud-purge"]
+        )
+        output = io.StringIO()
+
+        with (
+            mock.patch.object(bookmark_sync, "ensure_browsers_closed"),
+            mock.patch.object(bookmark_sync, "load_snapshot_with_retry", return_value=source),
+            mock.patch.object(
+                bookmark_sync,
+                "sync_store",
+                side_effect=[(Path("/tmp/initial.bak"), initial), (Path("/tmp/repair.bak"), repaired)],
+            ) as sync_store,
+            mock.patch.object(bookmark_sync, "run_post_open_check", return_value=(True, None, drifted)),
+            mock.patch.object(bookmark_sync, "reset_chromium_cloud_via_api_then_sync") as cloud_purge,
+            contextlib.redirect_stdout(output),
+        ):
+            result = bookmark_sync.noninteractive_mode(args, [source, target])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(sync_store.call_count, 2)
+        cloud_purge.assert_not_called()
+        self.assertEqual(
+            sync_store.call_args_list[1],
+            mock.call(source, target_store, "strict", backup_enabled=True),
+        )
+        self.assertIn("repairing with the browser closed", output.getvalue())
+        self.assertNotIn("Cloud-safe resync", output.getvalue())
 
     def test_post_open_check_waits_full_window_before_repair(self) -> None:
         source_store = make_store("chrome:Default", "chrome")
