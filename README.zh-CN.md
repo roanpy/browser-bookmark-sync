@@ -26,7 +26,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 
 ## 解决的难题
 
-- **Edge 云端回灌：** 本地文件替换成功后，Edge Sync 可能在浏览器打开时恢复旧云端条目。`auto` 策略会检测打开后的漂移、按目标记录问题，并为受影响的 Chrome/Edge 配置切换到“浏览器 API 清空、等待云端稳定、恢复来源”的流程。
+- **Edge 云端回灌：** 本地文件替换成功后，Edge Sync 可能在浏览器打开时恢复旧云端条目。`auto` 会按目标记录问题，重开浏览器检测回灌，再关闭浏览器并修复本地书签树；不会自动清空云端书签。
 - **浏览器格式不同：** Chromium 使用 JSON 书签树，Safari 使用根节点和元数据不同的 plist。项目通过可移植书签树映射书签栏、菜单、目录、网址和可支持的同步根，而不是跨浏览器复制原始文件。
 - **标识反复变化：** 节点匹配时复用 Chromium ID/GUID 和 Safari UUID，减少无意义的删除重建及云同步噪声。
 - **一次性脚本不安全：** 默认逐目标备份、持久原子替换、重新加载校验；恢复前还会再次备份当前目标，并在校验失败时自动回滚。
@@ -38,7 +38,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 | 能力 | 说明 |
 | --- | --- |
 | 手动指定方向 | 任意已检测的受支持浏览器都可作为来源，并同步到一个或多个目标。 |
-| 两套同步策略 | 普通或纯本地配置使用快速直写；仅在 Chrome/Edge 确认存在回灌时使用云安全修复。 |
+| 两套同步策略 | `auto` 使用有备份的直接镜像、重开检测和关闭浏览器后的漂移修复；云安全清空仍是 Chrome/Edge 的显式破坏性选项。 |
 | 数据安全保护 | 默认备份、严格权限、单写者锁、中断恢复、链接文件拒绝、持久原子替换、写后校验、带回滚备份的恢复。 |
 | 本地隐私 | 无遥测、无 API Key、无托管服务，不上传书签；状态文件只保存哈希和时序观测。 |
 | Agent 可调用 | 提供可安装、确定性的 CLI 和稳定 JSON 输出，并保留可选 Codex/Hermes Skill 指令；Skill 是适配层，CLI 才是核心。 |
@@ -49,7 +49,7 @@ Bookmark Sync 是一个命令行工具和轻量 macOS 应用，可手动指定 C
 | 浏览器 | 直接同步 | 云安全修复 | 验证状态 |
 | --- | --- | --- | --- |
 | Chrome | 支持 | 支持 | 真实本地配置及隔离逻辑测试 |
-| Edge | 支持 | 支持 | 真实本地/云端校准及回灌修复 |
+| Edge | 支持 | 显式使用，且依赖账户状态 | 已验证自动重开检测和关闭浏览器后的本地修复 |
 | Safari | 支持 | 仅直接校验 | 真实本地配置 |
 | Brave | 支持 | 未校准 | 隔离配置，全部 Chromium 交叉方向 |
 | Vivaldi | 支持 | 未校准 | 隔离配置，全部 Chromium 交叉方向 |
@@ -69,10 +69,10 @@ cd browser-bookmark-sync
 ./sync-bookmarks --list
 ```
 
-无需克隆仓库，也可以直接安装已发布的 `v0.2.3` wheel：
+无需克隆仓库，也可以直接安装已发布的 `v0.2.4` wheel：
 
 ```bash
-python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.3/bookmark_sync-0.2.3-py3-none-any.whl
+python3 -m pip install --user https://github.com/roanpy/browser-bookmark-sync/releases/download/v0.2.4/bookmark_sync-0.2.4-py3-none-any.whl
 ```
 
 不保留源码目录也可以安装可调用 CLI：
@@ -132,10 +132,10 @@ Skill 负责提供 Agent 安全边界与调用规则，实际执行入口仍是�
 ./sync-bookmarks --from chrome --to edge safari --auto-close
 ```
 
-若 `auto` 判断需要云安全修复，必须明确允许临时清空目标云端书签：
+如需显式使用破坏性的云安全策略，必须授权临时清空目标云端书签：
 
 ```bash
-./sync-bookmarks --from chrome --to edge --auto-close --allow-cloud-purge
+./sync-bookmarks --from chrome --to edge --sync-strategy cloud-safe --auto-close --allow-cloud-purge
 ```
 
 恢复备份；恢复前会再次备份目标当前状态：
@@ -156,7 +156,7 @@ open "dist/Bookmark Sync.app"
 
 App 内置启动器会禁止 Python 写入字节码，正常运行不会改动已签名资源。
 
-应用会在运行前确认来源、目标、浏览器关闭、备份和可能的云端清空。公开分发二进制仍需要 Developer ID 签名和 Apple 公证；当前仓库发布源码，不提供已公证安装包。
+应用会在运行前确认来源、目标、浏览器关闭、备份和可能的云端清空。公开分发二进制仍需要 Developer ID 签名和 Apple 公证；只有完整配置 Apple 凭据后，发布流程才会附带 macOS 应用。
 
 带标签的发布流程见 [RELEASING.md](RELEASING.md)。没有 Apple 凭据时也可以发布源码和 wheel；只有完整配置 Apple 凭据后才会附加签名、公证的 macOS 应用。证书、密码和 Token 不会进入仓库。
 
@@ -164,6 +164,7 @@ App 内置启动器会禁止 Python 写入字节码，正常运行不会改动�
 
 - 云端清空必须显式传入 `--allow-cloud-purge`，并禁止与 `--no-backup` 同时使用。
 - 云端清空失败时，工具会关闭目标浏览器，并尽力从清空前备份恢复本地书签。
+- `auto` 不会清空云端书签；对开启同步的 Chromium 目标，会重开浏览器检查回灌，并在关闭浏览器后修复目标。
 - 相关浏览器关闭后会重新读取来源书签，避免使用关闭前的旧快照。
 - 原子替换失败时也会清理可能残留的临时书签文件。
 - 浏览器书签、备份和运行状态必须是单链接普通文件；符号链接和多硬链接文件会在读取或替换前被拒绝。
@@ -171,7 +172,7 @@ App 内置启动器会禁止 Python 写入字节码，正常运行不会改动�
 - 备份包含完整书签数据，不要上传到公开仓库或 Issue。
 - 状态文件只包含书签库 ID、SHA-256 签名、时序观测和策略历史，不保存书签标题或 URL。
 
-临时 Chrome/Edge 扩展只在云安全修复期间存在，并使用官方 Chromium 书签 API。参考 [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks) 和 [Microsoft Edge 扩展 API 支持](https://learn.microsoft.com/zh-cn/microsoft-edge/extensions/developer-guide/api-support)。
+临时 Chrome/Edge 扩展仅用于显式 cloud-safe 策略，并使用官方 Chromium 书签 API。该策略属于目标书签清空操作，具体能否收敛取决于浏览器账户状态。参考 [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks) 和 [Microsoft Edge 扩展 API 支持](https://learn.microsoft.com/zh-cn/microsoft-edge/extensions/developer-guide/api-support)。
 
 云安全模式只修复选定目标的书签，不等同于微软账号级重置。如果 Edge 自身报告整体同步故障，应先导出收藏夹，再按微软官方流程执行 [Re-sync 或 Reset sync](https://learn.microsoft.com/zh-cn/deployedge/edge-learnmore-reset-data-in-cloud)。Safari 书签仍由 iCloud 管理；Apple 提供自动归档及 [iCloud 书签恢复](https://support.apple.com/zh-cn/111761)。
 
@@ -186,7 +187,7 @@ ruff check .
 
 自动测试覆盖格式转换、稳定标识复用、策略选择、云端清空授权及回滚、备份恢复、稳定校验、命令封装和真实 JSON CLI 子进程协议。Brave、Vivaldi、Opera 还在隔离配置中测试了全部六个来源/目标方向，包括浏览器重开和逐字节备份恢复。
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.2.3`。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，当前最新公开版本为 `v0.2.4`。
 
 提交浏览器格式或恢复逻辑变更前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [TEST_MATRIX.md](TEST_MATRIX.md)。
 

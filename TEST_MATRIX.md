@@ -22,7 +22,7 @@ This project separates deterministic format tests from browser-dependent manual 
 | Browser set | Direction coverage | Result |
 | --- | --- | --- |
 | Chrome, Edge, Safari | Real local store detection and read-only listing | Validated on macOS |
-| Edge cloud sync | Local reinjection diagnosis, cloud-safe purge, settle, restore, and post-open verification | Validated on the maintainer's macOS profile; do not treat as a guarantee for every Edge account state |
+| Edge cloud sync | `auto` direct mirror, reopen drift detection, closed-browser repair, and full tree/order comparison passed on the maintainer's macOS profile; explicit cloud-safe purge timed out and rolled back on that profile. This is profile-specific behavior |
 | Brave, Vivaldi, Opera | All six directed Chromium source/target pairs in isolated profiles | Validated with direct mode, browser reopen, backup, and byte-for-byte restore |
 | Arc | Detection review | Not supported: sidebar archive is not the standard Chromium bookmark store |
 | Firefox | Format review | Not supported: safe support requires a transactional `places.sqlite` handler |

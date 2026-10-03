@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.4] - 2026-10-03
+
+- Keep automatic sync on the backed-up direct path for cloud-synced Chromium profiles, then reopen to detect reinjection and repair drift with the browser closed.
+- Keep cloud-safe purge an explicit strategy; report Chromium bookmark API failures and retry transient delete errors.
+- Add regression coverage for failed deletes, cloud reinjection, and post-open repair without a cloud purge.
+
 ## [0.2.3] - 2026-08-22
 
 - Require explicit sync targets instead of silently selecting Chrome, Edge, and Safari defaults.
