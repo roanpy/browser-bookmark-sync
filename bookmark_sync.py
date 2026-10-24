@@ -6,6 +6,7 @@ import copy
 import fcntl
 import hashlib
 import json
+import math
 import os
 import plistlib
 import stat
@@ -16,8 +17,10 @@ import uuid
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterator
+from urllib.parse import urlsplit
 
 from bookmark_sync_version import __version__
 
@@ -41,6 +44,7 @@ POST_OPEN_CHECK_PROFILES = {
 CLOUD_SETTLE_WAIT_SECONDS = 45.0
 EDGE_API_PURGE_WINDOW_SECONDS = 90.0
 EDGE_API_POLL_INTERVAL_SECONDS = 5.0
+CHROMIUM_EXTENSION_STARTUP_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass
@@ -100,6 +104,12 @@ class BrowserProfile:
     detect_stores: Callable[[], list[BrowserStore]]
     stabilization_profile: dict[str, Any]
     repair_profile: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ChromiumPurgeStartup:
+    url: str
+    wait: Callable[[subprocess.Popen[bytes] | None, float], None]
 
 
 FORMAT_HANDLERS: dict[str, FormatHandler] = {}
@@ -687,15 +697,15 @@ def browser_executable_path(browser: str) -> Path:
     raise SystemExit(f"Could not find executable for {profile.app_name}")
 
 
-def open_browser(browser: str, extra_args: list[str] | None = None) -> None:
+def open_browser(browser: str, extra_args: list[str] | None = None) -> subprocess.Popen[bytes] | None:
     if extra_args:
-        subprocess.Popen(
+        return subprocess.Popen(
             [str(browser_executable_path(browser)), *extra_args],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return
     subprocess.run(["open", "-a", get_browser_profile(browser).app_name], check=False)
+    return None
 
 
 def ensure_browsers_closed(required_browsers: set[str], auto_close: bool) -> None:
@@ -1311,15 +1321,69 @@ def write_target_store(source: BookmarkSnapshot, target: BrowserStore, mode: str
     get_format_handler(target.format).write_snapshot(source, target, mode)
 
 
-def render_chromium_bookmark_purge_worker(active_seconds: float) -> str:
+@contextmanager
+def chromium_purge_startup_server() -> Iterator[ChromiumPurgeStartup]:
+    # Authorize API deletion only after the extension proves it loaded; no bookmark data is sent.
+    capability = f"/ready/{uuid.uuid4().hex}"
+    acknowledged = False
+
+    class StartupHandler(BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(1.0)
+
+        def do_POST(self) -> None:
+            nonlocal acknowledged
+            expected_host = f"127.0.0.1:{self.server.server_port}"
+            valid = (
+                self.path == capability
+                and self.headers.get("Host") == expected_host
+                and self.headers.get("Content-Length", "0") == "0"
+                and self.headers.get("Transfer-Encoding") is None
+            )
+            self.send_response(204 if valid else 404)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if valid:
+                acknowledged = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with HTTPServer(("127.0.0.1", 0), StartupHandler) as server:
+        server.timeout = 0.25
+
+        def wait_for_startup(process: subprocess.Popen[bytes] | None, timeout_seconds: float) -> None:
+            deadline = time.monotonic() + timeout_seconds
+            while not acknowledged:
+                if process is not None and process.poll() is not None:
+                    raise SystemExit("Browser exited before the temporary bookmark-purge extension acknowledged startup")
+                if time.monotonic() >= deadline:
+                    raise SystemExit(
+                        "Temporary bookmark-purge extension did not acknowledge startup; "
+                        "the browser may have blocked command-line extension loading. No API purge was authorized"
+                    )
+                server.handle_request()
+
+        yield ChromiumPurgeStartup(
+            url=f"http://127.0.0.1:{server.server_port}{capability}",
+            wait=wait_for_startup,
+        )
+
+
+def render_chromium_bookmark_purge_worker(active_seconds: float, startup_url: str | None = None) -> str:
     active_window_ms = max(1, int(active_seconds * 1000))
     return f"""const ACTIVE_WINDOW_MS = {active_window_ms};
+const STARTUP_URL = {json.dumps(startup_url)};
 const ALARM_NAME = "edgeBookmarkPurge";
 const PURGE_PASS_DELAY_MS = 250;
 const REQUIRED_EMPTY_PASSES = 2;
 
 let purgeRunning = false;
 let purgeQueued = false;
+let startupReady = !STARTUP_URL;
 
 function storageGet(keys) {{
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -1402,11 +1466,12 @@ async function purgeAllBookmarks(deadlineMs) {{
   return false;
 }}
 
-async function ensureDeadline(forceReset) {{
+async function ensureDeadline() {{
   const now = Date.now();
   const state = await storageGet(["deadlineMs"]);
   const existing = Number(state.deadlineMs || 0);
-  if (!forceReset && existing > now) {{
+  // A restarted worker must not re-arm deletion after the source tree was restored.
+  if (existing > 0) {{
     return existing;
   }}
   const deadlineMs = now + ACTIVE_WINDOW_MS;
@@ -1422,8 +1487,8 @@ async function recordPurgeError(error) {{
   }}
 }}
 
-async function purgeWhileActive(forceReset) {{
-  const deadlineMs = await ensureDeadline(forceReset);
+async function purgeWhileActive() {{
+  const deadlineMs = await ensureDeadline();
   if (Date.now() > deadlineMs) {{
     clearAlarm();
     return;
@@ -1451,50 +1516,84 @@ async function purgeWhileActive(forceReset) {{
   }} finally {{
     purgeRunning = false;
     if (purgeQueued && Date.now() <= deadlineMs) {{
-      requestPurge(false);
+      requestPurge();
     }}
   }}
 }}
 
-function requestPurge(forceReset) {{
-  void purgeWhileActive(forceReset).catch(recordPurgeError);
+function requestPurge() {{
+  if (!startupReady) {{
+    return;
+  }}
+  void purgeWhileActive().catch(recordPurgeError);
+}}
+
+async function authorizeStartup() {{
+  const state = await storageGet(["startupAuthorized"]);
+  if (!state.startupAuthorized) {{
+    const response = await fetch(STARTUP_URL, {{ method: "POST", cache: "no-store" }});
+    if (!response.ok) {{
+      throw new Error("Temporary purge extension startup was not authorized");
+    }}
+    await storageSet({{ startupAuthorized: true }});
+  }}
+  startupReady = true;
+  requestPurge();
 }}
 
 chrome.runtime.onInstalled.addListener(() => {{
-  requestPurge(true);
+  requestPurge();
 }});
 
 chrome.runtime.onStartup.addListener(() => {{
-  requestPurge(false);
+  requestPurge();
 }});
 
 chrome.alarms.onAlarm.addListener((alarm) => {{
   if (alarm.name === ALARM_NAME) {{
-    requestPurge(false);
+    requestPurge();
   }}
 }});
 
 chrome.bookmarks.onCreated.addListener(() => {{
-  requestPurge(false);
+  requestPurge();
 }});
 
 chrome.bookmarks.onChanged.addListener(() => {{
-  requestPurge(false);
+  requestPurge();
 }});
 
 chrome.bookmarks.onMoved.addListener(() => {{
-  requestPurge(false);
+  requestPurge();
 }});
 
 chrome.bookmarks.onChildrenReordered.addListener(() => {{
-  requestPurge(false);
+  requestPurge();
 }});
 
-requestPurge(false);
+if (STARTUP_URL) {{
+  void authorizeStartup().catch(recordPurgeError);
+}} else {{
+  requestPurge();
+}}
 """
 
 
-def create_chromium_bookmark_purge_extension(active_seconds: float) -> tempfile.TemporaryDirectory[str]:
+def create_chromium_bookmark_purge_extension(
+    active_seconds: float, startup_url: str | None = None
+) -> tempfile.TemporaryDirectory[str]:
+    if startup_url is not None:
+        parsed = urlsplit(startup_url)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Purge extension startup URL must be a loopback HTTP capability")
     extension_dir = tempfile.TemporaryDirectory(prefix="chromium-bookmark-purge-")
     extension_path = Path(extension_dir.name)
     manifest = {
@@ -1504,8 +1603,10 @@ def create_chromium_bookmark_purge_extension(active_seconds: float) -> tempfile.
         "background": {"service_worker": "service-worker.js"},
         "permissions": ["alarms", "bookmarks", "storage"],
     }
+    if startup_url is not None:
+        manifest["host_permissions"] = ["http://127.0.0.1/*"]
     atomic_write_text(extension_path / "manifest.json", json.dumps(manifest, indent=2))
-    atomic_write_text(extension_path / "service-worker.js", render_chromium_bookmark_purge_worker(active_seconds))
+    atomic_write_text(extension_path / "service-worker.js", render_chromium_bookmark_purge_worker(active_seconds, startup_url))
     return extension_dir
 
 
@@ -1530,13 +1631,16 @@ def wait_for_bookmark_count(
     timeout_seconds: float,
     poll_interval_seconds: float,
     stable_passes: int = 2,
+    expected_folder_count: int | None = None,
 ) -> BookmarkSnapshot:
     deadline = time.time() + timeout_seconds
     matched_passes = 0
     latest = load_snapshot_with_retry(target)
     while True:
         latest = load_snapshot_with_retry(target)
-        if latest.bookmark_count == expected_count:
+        if latest.bookmark_count == expected_count and (
+            expected_folder_count is None or latest.folder_count == expected_folder_count
+        ):
             matched_passes += 1
             if matched_passes >= stable_passes:
                 return latest
@@ -1631,8 +1735,12 @@ def rollback_failed_cloud_purge(target: BrowserStore, backup_path: Path) -> bool
         return False
 
     try:
-        atomic_write_bytes(target.path, read_regular_bytes(backup_path, "cloud-purge backup"))
+        backup_bytes = read_regular_bytes(backup_path, "cloud-purge backup")
+        atomic_write_bytes(target.path, backup_bytes)
         restored = load_snapshot(target)
+        if read_regular_bytes(target.path, "restored bookmark store") != backup_bytes:
+            print(f"Cloud purge rollback verification failed for {target.label}. Backup: {display_path(backup_path)}")
+            return False
         print(f"Cloud purge failed; restored local {target.label} from {display_path(backup_path)} ({restored.bookmark_count} bookmarks).")
         return True
     except (OSError, json.JSONDecodeError, plistlib.InvalidFileException, SystemExit) as exc:
@@ -1651,39 +1759,54 @@ def reset_chromium_cloud_via_api_then_sync(
     if not supports_cloud_safe_strategy(target):
         raise SystemExit("--edge-api-clear-then-sync only supports Chrome and Edge Chromium targets")
     require_cloud_purge_backup(backup_enabled)
+    if not math.isfinite(purge_window_seconds) or purge_window_seconds <= 0:
+        raise SystemExit("Cloud purge window must be a positive finite number")
+    if not math.isfinite(settle_wait_seconds) or settle_wait_seconds < 0:
+        raise SystemExit("Cloud settle wait must be a non-negative finite number")
+    if target.path.name != "Bookmarks" or target.path.parent.name != target.profile:
+        raise SystemExit("Cloud purge target does not identify a Chromium profile bookmark file")
+    if target.browser in running_browsers():
+        raise SystemExit("Browser must be fully closed before launching the temporary bookmark-purge extension")
 
     clear_backup = backup_target(target)
     pending_created = begin_pending_operation(target, clear_backup, "cloud-safe")
     try:
-        with create_chromium_bookmark_purge_extension(purge_window_seconds) as extension_dir:
+        with (
+            chromium_purge_startup_server() as startup,
+            create_chromium_bookmark_purge_extension(purge_window_seconds, startup_url=startup.url) as extension_dir,
+        ):
             print(f"{target.browser.capitalize()} API purge phase: launching the browser with a temporary bookmark-purge extension.")
-            open_browser(
+            process = open_browser(
                 target.browser,
                 extra_args=[
                     "--no-first-run",
+                    f"--user-data-dir={target.path.parent.parent}",
                     f"--profile-directory={target.profile}",
                     f"--load-extension={extension_dir}",
                 ],
             )
+            startup.wait(process, min(purge_window_seconds, CHROMIUM_EXTENSION_STARTUP_TIMEOUT_SECONDS))
+            print("Temporary bookmark-purge extension acknowledged startup.")
             cleared = wait_for_bookmark_count(
                 target,
                 expected_count=0,
                 timeout_seconds=purge_window_seconds,
                 poll_interval_seconds=EDGE_API_POLL_INTERVAL_SECONDS,
+                expected_folder_count=0,
             )
-            print(f"{target.browser.capitalize()} API purge phase reached {cleared.bookmark_count} bookmarks.")
-            if cleared.bookmark_count != 0:
+            print(f"{target.browser.capitalize()} API purge phase reached {cleared.bookmark_count} bookmarks, {cleared.folder_count} folders.")
+            if cleared.bookmark_count != 0 or cleared.folder_count != 0:
                 raise SystemExit(f"{target.browser.capitalize()} API purge did not reach an empty bookmark state before timeout")
             print(f"Waiting {settle_wait_seconds:g}s with {target.browser.capitalize()} open so bookmark deletions can propagate through cloud sync...")
             time.sleep(settle_wait_seconds)
             after_wait = load_snapshot_with_retry(target)
-            print(f"{target.browser.capitalize()} API purge phase after settle wait: {after_wait.bookmark_count} bookmarks.")
-            if after_wait.bookmark_count != 0:
+            print(f"{target.browser.capitalize()} API purge phase after settle wait: {after_wait.bookmark_count} bookmarks, {after_wait.folder_count} folders.")
+            if after_wait.bookmark_count != 0 or after_wait.folder_count != 0:
                 raise SystemExit(f"{target.browser.capitalize()} API purge did not stay empty through the cloud-settle wait")
             ensure_browsers_closed({target.browser}, auto_close=True)
 
         sync_backup, verification = sync_store(source, target, mode, backup_enabled=True)
-        mark_cloud_issue(target, f"cloud-safe remediation succeeded for {target.id}")
+        mark_cloud_issue(target, f"cloud-safe local mirror completed for {target.id}; account cloud reset is not verified")
         clear_pending_operation(pending_created)
         return clear_backup, sync_backup, verification
     except BaseException:
