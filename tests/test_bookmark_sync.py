@@ -46,6 +46,102 @@ def make_snapshot(store: bookmark_sync.BrowserStore, portable: dict[str, list[di
     )
 
 
+def run_chromium_worker_harness(worker: str, options: dict | None = None) -> dict:
+    if shutil.which("node") is None:
+        raise unittest.SkipTest("node is required to execute the generated service worker")
+    harness = r"""
+const worker = __WORKER__;
+const options = __OPTIONS__;
+const storage = options.initialState || {};
+const calls = [];
+const phases = [];
+let unauthorized = 0;
+let finished = false;
+let sequence = 0;
+let reversed = false;
+const tree = [{ id: "0", children: [
+  { id: "1", title: "Bar", children: [{ id: "old", title: "Old", url: "https://old.test" }] },
+  { id: "2", title: "Other", children: [] },
+  ...(options.noMobile ? [] : [{ id: "3", title: "Mobile", children: [] }]),
+] }];
+const listener = { addListener() {} };
+function checkAuthorization() { if (!storage.startupAuthorized) unauthorized += 1; }
+function findNode(id, nodes = tree) {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const nested = findNode(id, node.children || []);
+    if (nested) return nested;
+  }
+}
+function removeNode(id, nodes = tree) {
+  const index = nodes.findIndex((node) => node.id === id);
+  if (index >= 0) { nodes.splice(index, 1); return true; }
+  return nodes.some((node) => removeNode(id, node.children || []));
+}
+function finish() {
+  if (finished) return;
+  finished = true;
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({ tree, calls, phases, storage, unauthorized }));
+  }, 10);
+}
+globalThis.fetch = async (_url, request) => {
+  if (!request.body) return { ok: options.authorize !== false };
+  const status = JSON.parse(request.body);
+  phases.push(status);
+  if (status.phase === "rebuilt" || status.phase === "failed") finish();
+  return { ok: true, json: async () => ({ command: "rebuild" }) };
+};
+globalThis.chrome = {
+  runtime: { lastError: null, onInstalled: listener, onStartup: listener },
+  alarms: { create() {}, clear() {}, onAlarm: listener },
+  storage: { local: {
+    get(keys, done) { done(Object.fromEntries(keys.map((key) => [key, storage[key]]))); },
+    set(values, done) {
+      Object.assign(storage, values);
+      if (values.phase === "failed" && !storage.startupAuthorized) finish();
+      if (done) done();
+    },
+  } },
+  bookmarks: {
+    getTree(done) {
+      checkAuthorization();
+      if (options.reverseFinal && calls.length && !reversed) {
+        tree[0].children[0].children.reverse();
+        reversed = true;
+      }
+      setImmediate(() => done(JSON.parse(JSON.stringify(tree))));
+    },
+    remove(id, done) { checkAuthorization(); removeNode(id); setImmediate(done); },
+    removeTree(id, done) { checkAuthorization(); removeNode(id); setImmediate(done); },
+    create(details, done) {
+      checkAuthorization();
+      calls.push({ ...details });
+      if (options.hangCreate) return;
+      if (options.createError) {
+        chrome.runtime.lastError = { message: "synthetic sensitive API error" };
+        done();
+        chrome.runtime.lastError = null;
+        return;
+      }
+      const node = { id: `new-${++sequence}`, title: details.title,
+        ...(details.url === undefined ? { children: [] } : { url: details.url }) };
+      if (options.dropCreateAt !== calls.length) findNode(details.parentId).children.splice(details.index, 0, node);
+      setImmediate(() => done(node));
+    },
+    onCreated: listener, onChanged: listener, onMoved: listener, onChildrenReordered: listener,
+  },
+};
+new Function(worker)();
+setTimeout(() => { if (!finished) { console.error("worker did not finish"); process.exit(2); } }, 4500).unref();
+"""
+    harness = harness.replace("__WORKER__", json.dumps(worker)).replace("__OPTIONS__", json.dumps(options or {}))
+    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=6, check=False)
+    if result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return json.loads(result.stdout)
+
+
 class BookmarkSyncTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runtime_dir = tempfile.TemporaryDirectory()
@@ -810,7 +906,8 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertIn("sync not active", decision.reason)
 
     def test_create_chromium_bookmark_purge_extension_writes_manifest_and_worker(self) -> None:
-        with bookmark_sync.create_chromium_bookmark_purge_extension(30.0) as extension_dir:
+        source = {"bar": [{"type": "url", "name": 'A "quoted"', "url": "https://example.test/a"}], "menu": [], "synced": []}
+        with bookmark_sync.create_chromium_bookmark_purge_extension(30.0, "http://127.0.0.1:12345/ready/test", source) as extension_dir:
             extension_path = Path(extension_dir)
             manifest = json.loads((extension_path / "manifest.json").read_text())
             worker = (extension_path / "service-worker.js").read_text()
@@ -821,7 +918,14 @@ class BookmarkSyncTests(unittest.TestCase):
         self.assertIn("alarms", manifest["permissions"])
         self.assertIn("chrome.bookmarks.getTree", worker)
         self.assertIn("chrome.bookmarks.onCreated", worker)
-        self.assertNotIn("host_permissions", manifest)
+        embedded = worker.split("const SOURCE_TREE = ", 1)[1].split(";\n", 1)[0]
+        self.assertEqual(json.loads(embedded), source)
+        self.assertEqual(manifest["host_permissions"], ["http://127.0.0.1/*"])
+        self.assertIn("chrome.bookmarks.create", worker)
+        with self.assertRaisesRegex(ValueError, "authorized startup URL"):
+            bookmark_sync.create_chromium_bookmark_purge_extension(30.0)
+        with self.assertRaisesRegex(ValueError, "authorized startup URL"):
+            bookmark_sync.render_chromium_bookmark_purge_worker(30.0, None)
 
     def test_purge_extension_startup_permission_is_loopback_only(self) -> None:
         startup_url = "http://127.0.0.1:12345/ready/test-capability"
@@ -878,6 +982,47 @@ class BookmarkSyncTests(unittest.TestCase):
             ):
                 startup.wait(None, 1.0)
 
+    def test_purge_startup_server_controls_rebuild_and_accepts_only_count_status(self) -> None:
+        errors = []
+        with bookmark_sync.chromium_purge_startup_server() as startup:
+            parsed = urlsplit(startup.url)
+
+            def post(status=None):
+                connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=2)
+                body = b"" if status is None else json.dumps(status).encode()
+                connection.request("POST", parsed.path, body=body)
+                response = connection.getresponse()
+                content = response.read()
+                result = response.status, json.loads(content) if response.status == 200 else None
+                connection.close()
+                return result
+
+            self.assertEqual(post()[0], 204)
+            self.assertEqual(post({"phase": "purged", "url": "https://private.test"})[0], 400)
+
+            def rebuild_worker() -> None:
+                try:
+                    for _ in range(20):
+                        status, response = post({"phase": "purged", "bookmarks": 0, "folders": 0})
+                        if status == 200 and response["command"] == "rebuild":
+                            post({"phase": "rebuilt", "bookmarks": 2, "folders": 1, "mobile_fallback": False})
+                            return
+                        threading.Event().wait(0.01)
+                    raise AssertionError("rebuild command was not received")
+                except Exception as exc:
+                    errors.append(exc)
+
+            sender = threading.Thread(target=rebuild_worker)
+            sender.start()
+            try:
+                startup.wait(None, 1.0)
+                result = startup.rebuild(None, 2.0)
+            finally:
+                sender.join(timeout=3)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(result, {"phase": "rebuilt", "bookmarks": 2, "folders": 1, "mobile_fallback": False})
+
     def test_chromium_purge_worker_waits_for_startup_authorization(self) -> None:
         if shutil.which("node") is None:
             self.skipTest("node is required to execute the generated service worker")
@@ -893,9 +1038,9 @@ let requests = 0;
 let treeReads = 0;
 let authorized = false;
 const listener = {{ addListener(callback) {{ listeners.push(callback); }} }};
-globalThis.fetch = async () => {{
-  requests += 1;
-  return {{ ok: accepted }};
+globalThis.fetch = async (_url, options) => {{
+  if (!options.body) requests += 1;
+  return {{ ok: accepted, json: async () => ({{ command: "rebuild" }}) }};
 }};
 globalThis.chrome = {{
   runtime: {{ lastError: null, onInstalled: listener, onStartup: listener }},
@@ -912,7 +1057,7 @@ globalThis.chrome = {{
     getTree(callback) {{
       if (!authorized) throw new Error("API called before startup authorization");
       treeReads += 1;
-      callback([{{ children: [{{ children: [] }}] }}]);
+      callback([{{ children: [{{ id: "1", children: [] }}, {{ id: "2", children: [] }}, {{ id: "3", children: [] }}] }}]);
     }},
     onCreated: listener, onChanged: listener, onMoved: listener, onChildrenReordered: listener,
   }},
@@ -935,12 +1080,12 @@ setTimeout(() => {{
         if shutil.which("node") is None:
             self.skipTest("node is required to execute the generated service worker")
 
-        worker = bookmark_sync.render_chromium_bookmark_purge_worker(1.0)
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(1.0, "http://127.0.0.1:12345/ready/test")
         harness = f"""
 const worker = {json.dumps(worker)};
 const listeners = {{}};
 const deadline = Date.now() - 1000;
-const storage = {{ deadlineMs: deadline }};
+const storage = {{ deadlineMs: deadline, startupAuthorized: true }};
 let treeReads = 0;
 function listener(name) {{
   return {{ addListener(callback) {{ listeners[name] = callback; }} }};
@@ -958,6 +1103,7 @@ globalThis.chrome = {{
     onMoved: listener("moved"), onChildrenReordered: listener("reordered"),
   }},
 }};
+globalThis.fetch = async () => ({{ ok: true, json: async () => ({{ command: "purge" }}) }});
 eval(worker);
 listeners.installed();
 listeners.startup();
@@ -976,7 +1122,7 @@ setTimeout(() => {{
         if shutil.which("node") is None:
             self.skipTest("node is required to execute the generated service worker")
 
-        worker = bookmark_sync.render_chromium_bookmark_purge_worker(2.0)
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(2.0, "http://127.0.0.1:12345/ready/test")
         harness = f"""
 const worker = {json.dumps(worker)};
 const listeners = {{}};
@@ -1089,7 +1235,9 @@ const chrome = {{
 }};
 
 globalThis.chrome = chrome;
-eval(worker);
+const started = Date.now();
+globalThis.fetch = async () => ({{ ok: true, json: async () => ({{ command: Date.now() - started > 1100 ? "rebuild" : "purge" }}) }});
+new Function(worker)();
 
 setTimeout(() => {{
   const remaining = countNodes(tree[0].children.flatMap((node) => node.children || []));
@@ -1107,11 +1255,70 @@ setTimeout(() => {{
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_chromium_worker_rebuilds_depth_first_with_explicit_sibling_order(self) -> None:
+        source = {
+            "bar": [
+                {"type": "folder", "name": "Folder", "children": [
+                    {"type": "url", "name": "First", "url": "https://first.test"},
+                    {"type": "url", "name": "Last", "url": "https://last.test"},
+                ]},
+                {"type": "url", "name": "Bar last", "url": "https://bar.test"},
+            ],
+            "menu": [{"type": "url", "name": "Other", "url": "https://other.test"}],
+            "synced": [{"type": "url", "name": "Mobile", "url": "https://mobile.test"}],
+        }
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(2.0, "http://127.0.0.1:12345/ready/test", source)
+        result = run_chromium_worker_harness(worker)
+        self.assertEqual(result["unauthorized"], 0)
+        self.assertEqual(result["storage"]["phase"], "rebuilt")
+        self.assertEqual([call["title"] for call in result["calls"]], ["Folder", "First", "Last", "Bar last", "Other", "Mobile"])
+        self.assertEqual([call["index"] for call in result["calls"]], [0, 0, 1, 1, 0, 0])
+        self.assertEqual([call["parentId"] for call in result["calls"]], ["1", "new-1", "new-1", "1", "2", "3"])
+        self.assertEqual(result["phases"][-1], {"phase": "rebuilt", "bookmarks": 5, "folders": 1, "mobile_fallback": False})
+
+    def test_chromium_worker_falls_back_to_existing_root_when_mobile_is_missing(self) -> None:
+        source = {"bar": [], "menu": [{"type": "url", "name": "Other", "url": "https://other.test"}],
+                  "synced": [{"type": "url", "name": "Mobile", "url": "https://mobile.test"}]}
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(2.0, "http://127.0.0.1:12345/ready/test", source)
+        result = run_chromium_worker_harness(worker, {"noMobile": True})
+        self.assertEqual([call["parentId"] for call in result["calls"]], ["2", "2"])
+        self.assertEqual([call["index"] for call in result["calls"]], [0, 1])
+        self.assertTrue(result["phases"][-1]["mobile_fallback"])
+        self.assertEqual(result["storage"]["phase"], "rebuilt")
+
+    def test_chromium_worker_rejects_count_order_create_errors_and_rebuild_timeouts(self) -> None:
+        source = {"bar": [{"type": "url", "name": "A", "url": "https://a.test"},
+                          {"type": "url", "name": "B", "url": "https://b.test"}], "menu": [], "synced": []}
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(1.0, "http://127.0.0.1:12345/ready/test", source)
+        for options, error in (
+            ({"dropCreateAt": 2}, "rebuild_count_mismatch"),
+            ({"reverseFinal": True}, "rebuild_order_mismatch"),
+            ({"createError": True}, "rebuild_failed"),
+            ({"hangCreate": True}, "rebuild_failed"),
+            ({"initialState": {"startupAuthorized": True, "phase": "rebuilding"}}, "rebuild_interrupted"),
+        ):
+            with self.subTest(options=options):
+                result = run_chromium_worker_harness(worker, options)
+                self.assertEqual(result["storage"]["phase"], "failed")
+                self.assertEqual(result["phases"][-1]["error"], error)
+                self.assertNotIn("synthetic sensitive API error", json.dumps(result["phases"]))
+
+    def test_chromium_worker_never_deletes_or_creates_without_authorization(self) -> None:
+        worker = bookmark_sync.render_chromium_bookmark_purge_worker(
+            1.0, "http://127.0.0.1:12345/ready/test", {"bar": [], "menu": [], "synced": []}
+        )
+        result = run_chromium_worker_harness(worker, {"authorize": False})
+        self.assertEqual(result["unauthorized"], 0)
+        self.assertEqual(result["calls"], [])
+        self.assertEqual(result["tree"][0]["children"][0]["children"][0]["id"], "old")
+
     def test_chromium_api_clear_then_sync_runs_purge_then_sync(self) -> None:
         source_store = make_store("chrome:Default", "chrome")
         target_store = make_store("edge:Default", "edge")
         target_store.path = Path("/tmp/isolated-edge/Default/Bookmarks")
-        startup = bookmark_sync.ChromiumPurgeStartup("http://127.0.0.1:12345/ready/test", mock.Mock())
+        startup = bookmark_sync.ChromiumPurgeStartup(
+            "http://127.0.0.1:12345/ready/test", mock.Mock(), mock.Mock(return_value={"bookmarks": 1, "folders": 0})
+        )
         source = make_snapshot(source_store, {"bar": [{"type": "url", "name": "A", "url": "https://a"}], "menu": [], "synced": []})
         cleared = make_snapshot(target_store, {"bar": [], "menu": [], "synced": []})
         verification = bookmark_sync.SyncVerification(
@@ -1133,15 +1340,15 @@ setTimeout(() => {{
                     return_value=contextlib.nullcontext(extdir),
                 ),
                 mock.patch.object(bookmark_sync, "open_browser") as open_browser,
-                mock.patch.object(bookmark_sync, "wait_for_bookmark_count", return_value=cleared) as wait_for_count,
+                mock.patch.object(bookmark_sync, "wait_for_bookmark_count", side_effect=[cleared, source]) as wait_for_count,
                 mock.patch.object(bookmark_sync, "load_snapshot_with_retry", return_value=cleared),
                 mock.patch.object(bookmark_sync.time, "sleep"),
                 mock.patch.object(bookmark_sync, "ensure_browsers_closed") as close_browser,
                 mock.patch.object(
                     bookmark_sync,
-                    "sync_store",
-                    return_value=(Path("/tmp/sync-backup"), verification),
-                ) as sync_store,
+                    "verify_snapshot_with_stabilization", return_value=verification,
+                ) as verify,
+                mock.patch.object(bookmark_sync, "sync_store") as sync_store,
             ):
                 clear_backup, sync_backup, result = bookmark_sync.reset_chromium_cloud_via_api_then_sync(
                     source,
@@ -1152,28 +1359,27 @@ setTimeout(() => {{
                 )
 
         self.assertEqual(clear_backup, Path("/tmp/clear-backup"))
-        self.assertEqual(sync_backup, Path("/tmp/sync-backup"))
+        self.assertIsNone(sync_backup)
         self.assertTrue(result.same_portable)
         open_browser.assert_called_once()
         self.assertIn("--user-data-dir=/tmp/isolated-edge", open_browser.call_args.kwargs["extra_args"])
         self.assertIn(f"--profile-directory={target_store.profile}", open_browser.call_args.kwargs["extra_args"])
         self.assertIn(f"--load-extension={extdir}", open_browser.call_args.kwargs["extra_args"])
-        wait_for_count.assert_called_once_with(
-            target_store,
-            expected_count=0,
-            timeout_seconds=60.0,
-            poll_interval_seconds=bookmark_sync.EDGE_API_POLL_INTERVAL_SECONDS,
-            expected_folder_count=0,
-        )
+        self.assertEqual(wait_for_count.call_count, 2)
+        self.assertEqual(wait_for_count.call_args_list[0].kwargs["expected_count"], 0)
+        self.assertEqual(wait_for_count.call_args_list[1].kwargs["expected_count"], source.bookmark_count)
+        self.assertEqual(wait_for_count.call_args_list[1].kwargs["expected_folder_count"], source.folder_count)
         startup.wait.assert_called_once_with(open_browser.return_value, bookmark_sync.CHROMIUM_EXTENSION_STARTUP_TIMEOUT_SECONDS)
         close_browser.assert_called_once_with({"edge"}, auto_close=True)
-        sync_store.assert_called_once_with(source, target_store, "strict", backup_enabled=True)
+        startup.rebuild.assert_called_once_with(open_browser.return_value, 60.0)
+        verify.assert_called_once_with(target_store, source)
+        sync_store.assert_not_called()
 
     def test_chromium_api_purge_rolls_back_after_failure(self) -> None:
         source_store = make_store("chrome:Default", "chrome")
         target_store = make_store("edge:Default", "edge")
         target_store.path = Path("/tmp/isolated-edge/Default/Bookmarks")
-        startup = bookmark_sync.ChromiumPurgeStartup("http://127.0.0.1:12345/ready/test", mock.Mock())
+        startup = bookmark_sync.ChromiumPurgeStartup("http://127.0.0.1:12345/ready/test", mock.Mock(), mock.Mock())
         source = make_snapshot(source_store, {"bar": [], "menu": [], "synced": []})
         not_cleared = make_snapshot(
             target_store,
@@ -1205,6 +1411,38 @@ setTimeout(() => {{
                 )
 
         rollback.assert_called_once_with(target_store, backup_path)
+
+    def test_api_rebuild_errors_count_mismatch_and_final_order_mismatch_roll_back(self) -> None:
+        source = make_snapshot(make_store("chrome:Default", "chrome"),
+                               {"bar": [{"type": "url", "name": "A", "url": "https://a.test"}], "menu": [], "synced": []})
+        target = make_store("edge:Default", "edge")
+        target.path = Path("/tmp/isolated-edge/Default/Bookmarks")
+        cleared = make_snapshot(target, {"bar": [], "menu": [], "synced": []})
+        mismatched = bookmark_sync.SyncVerification(
+            reloaded=source, same_count=True, same_portable=False, source_signature="source", target_signature="different-order"
+        )
+        for outcome in (SystemExit("API rebuild failed"), {"bookmarks": 2, "folders": 0}, {"bookmarks": 1, "folders": 0}):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as extdir:
+                rebuild = mock.Mock(side_effect=outcome) if isinstance(outcome, SystemExit) else mock.Mock(return_value=outcome)
+                startup = bookmark_sync.ChromiumPurgeStartup("http://127.0.0.1:12345/ready/test", mock.Mock(), rebuild)
+                with (
+                    mock.patch.object(bookmark_sync, "running_browsers", return_value=[]),
+                    mock.patch.object(bookmark_sync, "chromium_purge_startup_server", return_value=contextlib.nullcontext(startup)),
+                    mock.patch.object(bookmark_sync, "create_chromium_bookmark_purge_extension", return_value=contextlib.nullcontext(extdir)),
+                    mock.patch.object(bookmark_sync, "backup_target", return_value=Path("/tmp/clear-backup")),
+                    mock.patch.object(bookmark_sync, "open_browser"),
+                    mock.patch.object(bookmark_sync, "wait_for_bookmark_count", side_effect=[cleared, source]),
+                    mock.patch.object(bookmark_sync, "load_snapshot_with_retry", return_value=cleared),
+                    mock.patch.object(bookmark_sync.time, "sleep"),
+                    mock.patch.object(bookmark_sync, "ensure_browsers_closed"),
+                    mock.patch.object(bookmark_sync, "verify_snapshot_with_stabilization", return_value=mismatched),
+                    mock.patch.object(bookmark_sync, "sync_store") as file_sync,
+                    mock.patch.object(bookmark_sync, "rollback_failed_cloud_purge", return_value=True) as rollback,
+                    self.assertRaises(SystemExit),
+                ):
+                    bookmark_sync.reset_chromium_cloud_via_api_then_sync(source, target, "strict", 2.0, 0.0)
+                rollback.assert_called_once_with(target, Path("/tmp/clear-backup"))
+                file_sync.assert_not_called()
 
     def test_cloud_purge_rejects_running_browser_before_backup_or_launch(self) -> None:
         source = make_snapshot(make_store("chrome:Default", "chrome"), {"bar": [], "menu": [], "synced": []})
@@ -1238,6 +1476,7 @@ setTimeout(() => {{
         startup = bookmark_sync.ChromiumPurgeStartup(
             "http://127.0.0.1:12345/ready/test",
             mock.Mock(side_effect=SystemExit("extension startup blocked")),
+            mock.Mock(),
         )
         backup_path = Path("/tmp/clear-backup")
         with tempfile.TemporaryDirectory() as extdir:
@@ -1266,6 +1505,7 @@ setTimeout(() => {{
         startup = bookmark_sync.ChromiumPurgeStartup(
             "http://127.0.0.1:12345/ready/test",
             mock.Mock(side_effect=SystemExit("extension startup blocked")),
+            mock.Mock(),
         )
         with tempfile.TemporaryDirectory() as extdir:
             with (
