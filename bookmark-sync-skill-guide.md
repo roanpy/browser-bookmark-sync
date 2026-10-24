@@ -28,9 +28,14 @@ Canonical automation guide for the repository. User-facing installation and safe
 - Backups are enabled by default and cover only targets in the current run.
 - Do not pass `--no-backup` unless the user explicitly requests a direct-only run; cloud purge always requires a backup.
 - Browsers must be closed. Pass `--auto-close` only with user authorization.
-- `auto` uses backed-up direct mirroring, then reopens sync-enabled Chromium targets and repairs detected drift with the browser closed.
-- Cloud-safe temporarily clears target bookmarks. Use `--sync-strategy cloud-safe --allow-cloud-purge` only after explicit user authorization.
-- If cloud purge fails, report whether the pre-purge local backup was restored and include its path.
+- `auto` uses backed-up direct mirroring, then reopens supported sync-enabled Chromium targets for the full post-open observation window; detected drift is repaired with another backup after closing the browser.
+- `auto` repairs only the local tree and does not clear cloud bookmarks. Later browser opens or other synced devices can re-inject bookmarks; do not promise permanent prevention.
+- Cloud-safe is an explicit, destructive attempt to temporarily clear target cloud bookmarks. Use `--sync-strategy cloud-safe --allow-cloud-purge` only after explicit user authorization. It requires Developer mode toggled on once at `edge://extensions` or `chrome://extensions`; modern Chrome/Edge otherwise ignore `--load-extension`, and the CLI fails fast with that guidance.
+- For an explicitly authorized automated Edge repair, prefer the CLI `cloud-safe` command: it backs up the target, uses a temporary Chromium bookmarks API extension to clear it, waits for cloud settling, then recreates the source tree in source order through the browser API so cloud position metadata stays correct. It can time out and roll back; reaching zero locally does not prove Microsoft's cloud was cleared.
+- Invoke cloud-safe from the repository's current `./sync-bookmarks`, not an installed CLI that may lag behind the source safeguards.
+- Do not blindly repeat `cloud-safe` for a target whose prior attempt timed out. Microsoft's official account-level Reset sync is a separate Settings workflow with no supported command/API exposed by this project; do not use undocumented endpoints or open Settings automatically. If the user requests command-only operation and the CLI fails, stop and report the limitation. See [Microsoft's cloud reset procedure](https://learn.microsoft.com/en-us/deployedge/edge-learnmore-reset-data-in-cloud).
+- On success, verify the full portable tree after the post-open check. Other synced devices can still reintroduce changes; don't promise permanent cloud convergence.
+- If cloud purge times out or fails, report whether the pre-purge local backup was restored and include its path; local rollback does not establish that cloud bookmarks were cleared.
 - Resolve unfinished operations with `--recover` before new writes; use `--discard-recovery` only with explicit user approval after inspection.
 - Prefer `--mode strict` for real syncs.
 - Use `--restore-backup` with `--restore-target` to restore; restoration creates a rollback backup first.
@@ -78,5 +83,7 @@ cp skills/bookmark-sync/SKILL.md "${CODEX_HOME:-$HOME/.codex}/skills/bookmark-sy
 ## Verification
 
 - A real sync must report a backup path, result count, and stabilization result.
+- Compare the complete portable bookmark tree, including folder hierarchy, titles, URLs, and node order; matching counts alone are insufficient.
+- For post-open checks, wait for the full observation window before judging cloud reinjection. Distinguish alignment after reopening from a repair verified only with the browser closed; neither guarantees future cloud convergence.
 - A restore must report a rollback backup and restored result count.
 - Run `python3 -m unittest discover -s tests` after code changes.
