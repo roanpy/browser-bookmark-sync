@@ -323,6 +323,52 @@ class BookmarkSyncTests(unittest.TestCase):
 
         bookmark_sync.require_cloud_purge_backup(True)
 
+    def test_chromium_developer_mode_ready_states(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir) / "Default"
+            profile_dir.mkdir()
+            store = bookmark_sync.BrowserStore(
+                id="edge:Default",
+                browser="edge",
+                profile="Default",
+                format="chromium",
+                path=profile_dir / "Bookmarks",
+                label="edge:Default",
+            )
+            self.assertTrue(bookmark_sync.chromium_developer_mode_ready(store))
+
+            secure = profile_dir / "Secure Preferences"
+            secure.write_text(json.dumps({"extensions": {"ui": {"developer_mode": True}}}))
+            self.assertTrue(bookmark_sync.chromium_developer_mode_ready(store))
+
+            secure.write_text(json.dumps({"extensions": {"ui": {}}}))
+            self.assertFalse(bookmark_sync.chromium_developer_mode_ready(store))
+
+            secure.write_text(json.dumps({"extensions": {"ui": {"developer_mode": False}}}))
+            self.assertFalse(bookmark_sync.chromium_developer_mode_ready(store))
+
+    def test_cloud_purge_requires_developer_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir) / "Default"
+            profile_dir.mkdir()
+            (profile_dir / "Secure Preferences").write_text(json.dumps({"extensions": {"ui": {}}}))
+            store = bookmark_sync.BrowserStore(
+                id="edge:Default",
+                browser="edge",
+                profile="Default",
+                format="chromium",
+                path=profile_dir / "Bookmarks",
+                label="edge:Default",
+            )
+            with self.assertRaises(SystemExit) as caught:
+                bookmark_sync.require_chromium_developer_mode(store)
+            self.assertIn("edge://extensions", str(caught.exception))
+
+            (profile_dir / "Secure Preferences").write_text(
+                json.dumps({"extensions": {"ui": {"developer_mode": True}}})
+            )
+            bookmark_sync.require_chromium_developer_mode(store)
+
     def test_failed_cloud_purge_restores_local_backup(self) -> None:
         raw = {
             "roots": {

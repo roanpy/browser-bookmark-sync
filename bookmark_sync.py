@@ -1722,6 +1722,29 @@ def require_cloud_purge_consent(allowed: bool) -> None:
         raise SystemExit("Cloud bookmark purge requires explicit --allow-cloud-purge consent")
 
 
+def chromium_developer_mode_ready(target: BrowserStore) -> bool:
+    # Modern Chrome/Edge ignore --load-extension on established profiles unless
+    # Developer mode is enabled in the extensions settings page.
+    secure_prefs = target.path.parent / "Secure Preferences"
+    if not secure_prefs.exists():
+        return True  # fresh profile: unpacked command-line load still works
+    try:
+        data = json.loads(secure_prefs.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return data.get("extensions", {}).get("ui", {}).get("developer_mode") is True
+
+
+def require_chromium_developer_mode(target: BrowserStore) -> None:
+    if chromium_developer_mode_ready(target):
+        return
+    settings_url = "edge://extensions" if target.browser == "edge" else "chrome://extensions"
+    raise SystemExit(
+        f"cloud-safe purge needs Developer mode on {target.label}: open {settings_url}, "
+        'enable "Developer mode" once, then rerun. Modern browsers ignore --load-extension otherwise.'
+    )
+
+
 def require_cloud_purge_backup(backup_enabled: bool) -> None:
     if not backup_enabled:
         raise SystemExit("Cloud bookmark purge cannot run with --no-backup")
@@ -1759,6 +1782,7 @@ def reset_chromium_cloud_via_api_then_sync(
     if not supports_cloud_safe_strategy(target):
         raise SystemExit("--edge-api-clear-then-sync only supports Chrome and Edge Chromium targets")
     require_cloud_purge_backup(backup_enabled)
+    require_chromium_developer_mode(target)
     if not math.isfinite(purge_window_seconds) or purge_window_seconds <= 0:
         raise SystemExit("Cloud purge window must be a positive finite number")
     if not math.isfinite(settle_wait_seconds) or settle_wait_seconds < 0:
